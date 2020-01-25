@@ -4,7 +4,7 @@ from torch.nn.functional import mse_loss
 from torch.nn.modules.loss import _Loss    
 
 
-class BetaELB(_Loss):
+class BetaELBO(_Loss):
     def __init__(self, reconstruction_loss='bce', gamma=10.0, capacity=0.5):
         super().__init__(reduction='batchmean')
         if reconstruction_loss == 'bce':
@@ -28,7 +28,7 @@ class BetaELB(_Loss):
         return (recons_loss + self.gamma * (KLD - self.capacity))/target.size(0)
 
     
-class ELBO(BetaELB):
+class ELBO(BetaELBO):
     def __init__(self, reconstruction_loss='bce'):
         super().__init__(reconstruction_loss, 1.0, 0.0)
 
