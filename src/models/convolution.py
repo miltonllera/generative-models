@@ -68,14 +68,15 @@ def get_conv_layer_out_shape(input_shape, kernels, pools):
 
     for k, p in zip(kernels, pools):
         out_shape = conv2d_out_shape(out_shape, *k)
-        out_shape = maxpool2d_out_shape(out_shape, *p[:-1])
+        if p is not None:
+            out_shape = maxpool2d_out_shape(out_shape, *p[:-1])
 
     return out_shape
 
 
 class CNN(nn.Module):
-    def __init__(self, input_shape, kernels, pools, 
-                 non_linearity='relu', dropout=0.0):
+    def __init__(self, input_shape, kernels, pools, non_linearity='relu',
+                 batch_norm=False, dropout=0.0):
         super().__init__()
         if pools is None:
             pools = len(kernels) * [None]
@@ -85,13 +86,16 @@ class CNN(nn.Module):
                 'Number of pooling  and convolution layers do not match')
 
         in_chann, h, w = input_shape
+        non_linearity = get_nonlinearity(non_linearity)
 
         conv_layers = []
         for conv_shape, pooling_params in zip(kernels, pools):
-            conv_layers.extend([
-                nn.Conv2d(in_chann, *conv_shape),
-                get_nonlinearity(non_linearity)(),
-            ])
+            conv_layers.extend([nn.Conv2d(in_chann, *conv_shape),
+                                non_linearity()])
+
+            if batch_norm:
+                conv_layers.append(nn.BatchNorm2d(conv_shape[0]))
+            
             if pooling_params is not None:
                 conv_layers.append(create_pool(*pooling_params))
 
@@ -117,19 +121,26 @@ def _bilinear_usample(in_shape, kernel, pool):
 
 
 class tCNN(nn.Module):
-    def __init__(self, input_shape, kernels, pools, 
-                 non_linearity='relu', dropout=0.0):
+    def __init__(self, input_shape, kernels, pools, non_linearity='relu',
+                 batch_norm=False, dropout=0.0):
         super().__init__()
-        in_chann, h, w = input_shape
         if pools is None:
             pools = len(kernels) * [None]
 
         conv_layers, layer_input = [], input_shape
+        non_linearity = get_nonlinearity(non_linearity)
+
+        in_chann, h, w = input_shape
+
         for kernel, pool in zip(kernels, pools):
             out_channel = kernel[0]
 
-            conv = nn.ConvTranspose2d(out_channel, in_chann, *kernel[1:])
-            conv_layers.extend([conv, get_nonlinearity(non_linearity)()])
+            if batch_norm:
+                conv_layers.append(nn.BatchNorm2d(in_chann))
+
+            conv_layers.extend(
+                [non_linearity(),
+                 nn.ConvTranspose2d(out_channel, in_chann, *kernel[1:])])
 
             if pool is not None:
                 upsample, layer_input = _bilinear_usample(layer_input,
@@ -138,7 +149,11 @@ class tCNN(nn.Module):
                                                         
             in_chann = out_channel
 
-        self.tconv_layers = nn.Sequential(*reversed(conv_layers))
+        conv_layers = list(reversed(conv_layers))
+        while not isinstance(conv_layers[-1], nn.ConvTranspose2d):
+            conv_layers.pop()
+
+        self.tconv_layers = nn.Sequential(*conv_layers)
         self.input_shape = get_conv_layer_out_shape(input_shape, kernels, pools)
         self.out_shape = input_shape
 
