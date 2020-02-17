@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from .mlp import kaiming_normal_init_
 
 
 class StochasticLayer(nn.Module):
@@ -49,12 +50,36 @@ class DiagonalGaussian(GaussianLayer):
         self.mu_z = nn.Linear(input_size, latent_size)
         self.logvar_z = nn.Linear(input_size, latent_size)
         self.size = latent_size
-        
+
         self.reset_parameters()
 
     def reset_parameters(self):
-        nn.init.kaiming_normal_(self.mu_z.weight)
-        nn.init.kaiming_normal_(self.logvar_z.weight)
+        kaiming_normal_init_(mu_z)
+        kaiming_normal_init_(mu_z)
+
+
+class PosteriorGaussian(DiagonalGaussian):
+    def __init__(self, input_size, latent_size):
+        super().__init__(input_size, latent_size)
+
+    def forward(self, inputs):
+        h1, (prior_mu, prior_logvar) = inputs
+
+        # Compute distribution parameters
+        ll_mu, ll_logvar = self.mu_z(h1), self.mu_z(h1)
+
+        # Converte log variance to precision
+        ll_prec = ll_logvar.mul(-0.5).exp_()
+        prior_prec = prior_logvar.mul(-0.5).exp_()
+
+        # Precision weighted posterior computation
+        post_prec = 1.0 / (prior_prec + ll_prec)
+        post_mean = (prior_mu * prior_prec + ll_mu * ll_prec) * post_prec
+
+        # Transform back to log variance
+        post_logvar = -torch.log(post_prec + 1e-8)
+
+        return (post_mean, post_logvar), self.reparam(post_mu, post_logvar)
 
 
 class HomoscedasticGaussian(GaussianLayer):
@@ -70,6 +95,7 @@ class HomoscedasticGaussian(GaussianLayer):
     def reset_parameters(self):
         nn.init.kaiming_normal_(self.mu_z.weight)
         nn.init.normal_(self._logvar_z)
+        self.mu_z.bias.zero_()
 
     def logvar_z(self, inputs):
         return self._logvar_z.unsqueeze(0).expand(len(inputs), -1)
