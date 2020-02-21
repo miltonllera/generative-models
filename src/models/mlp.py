@@ -37,7 +37,7 @@ def create_mlp(input_size, hidden_sizes, output_size=None, nonlinearity='relu',
 
     layers = []
     for i in range(1, len(sizes)):
-        layers.append(nn.Linear(sizes[i-1], sizes[i]), bias=not batch_norm)
+        layers.append(nn.Linear(sizes[i-1], sizes[i], bias=not batch_norm))
 
         if batch_norm:
             layers.append(nn.BatchNorm1d(sizes[i]))

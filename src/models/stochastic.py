@@ -54,8 +54,8 @@ class DiagonalGaussian(GaussianLayer):
         self.reset_parameters()
 
     def reset_parameters(self):
-        kaiming_normal_init_(mu_z)
-        kaiming_normal_init_(mu_z)
+        kaiming_normal_init_(self.mu_z)
+        kaiming_normal_init_(self.mu_z)
 
 
 class PosteriorGaussian(DiagonalGaussian):
@@ -63,10 +63,10 @@ class PosteriorGaussian(DiagonalGaussian):
         super().__init__(input_size, latent_size)
 
     def forward(self, inputs):
-        h1, (prior_mu, prior_logvar) = inputs
+        h, (prior_mu, prior_logvar) = inputs
 
         # Compute distribution parameters
-        ll_mu, ll_logvar = self.mu_z(h1), self.mu_z(h1)
+        ll_mu, ll_logvar = self.mu_z(h), self.mu_z(h)
 
         # Converte log variance to precision
         ll_prec = ll_logvar.mul(-0.5).exp_()
@@ -74,12 +74,12 @@ class PosteriorGaussian(DiagonalGaussian):
 
         # Precision weighted posterior computation
         post_prec = 1.0 / (prior_prec + ll_prec)
-        post_mean = (prior_mu * prior_prec + ll_mu * ll_prec) * post_prec
+        post_mu = (prior_mu * prior_prec + ll_mu * ll_prec) * post_prec
 
         # Transform back to log variance
         post_logvar = -torch.log(post_prec + 1e-8)
 
-        return (post_mean, post_logvar), self.reparam(post_mu, post_logvar)
+        return (post_mu, post_logvar), self.reparam(post_mu, post_logvar)
 
 
 class HomoscedasticGaussian(GaussianLayer):

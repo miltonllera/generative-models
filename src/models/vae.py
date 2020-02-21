@@ -114,23 +114,24 @@ class LadderVAE(nn.Module):
             else:
                 lat = DiagonalGaussian(sizes[-1], latent_sizes[i])
 
-            input_size = sizes[-1]
-
             if i == 0:
-                sizes = list(reversed(sizes))
-                dec = create_mlp(latent_sizes[i], sizes, input_size,
+                dec_sizes = list(reversed(sizes))
+                dec = create_mlp(latent_sizes[i], dec_sizes, input_size,
                                  batch_norm=batch_norm)
             else:
-                sizes = list(reversed(sizes)) + [2 * latent_sizes[-1]]
-                dec = create_mlp(latent_sizes[i], sizes, batch_norm=batch_norm)
+                dec_sizes = list(reversed(sizes)) + [2 * latent_sizes[i-1]]
+                dec = create_mlp(latent_sizes[i], dec_sizes,
+                                 batch_norm=batch_norm)
+
+            input_size = sizes[-1]
 
             encoders.append(enc)
             decoders.append(dec)
             latents.append(lat)
 
         self.encoders = nn.ModuleList(encoders)
-        self.latents = nn.ModuleList(latents)
-        self.decoders = nn.ModuleList(decoders)
+        self.latents = nn.ModuleList(reversed(latents))
+        self.decoders = nn.ModuleList(reversed(decoders))
 
     def forward(self, inputs):
         hidden, params = [], []
@@ -139,14 +140,12 @@ class LadderVAE(nn.Module):
             inputs = enc(inputs)
             hidden.append(inputs)
 
-        p, z = self.latents[-1](hidden[-1])
-        h_tdown = self.decoders[-1](z)
+        p, z = self.latents[0](hidden.pop())
+        h_tdown = self.decoders[0](z)
         params.append(p)
 
-        for i in range(len(self.latents)):
-            lat = self.latents[-(2 + i)]
-            dec = self.decoders[-(2 + i)]
-            h_bup = hidden[-(2 + i)]
+        for lat, dec in zip(reversed(self.latents[1:]), self.decoders[1:]):
+            h_bup = hidden.pop()
 
             p, z = lat((h_bup, h_tdown.chunk(2, 1)))
             h_tdown = dec(z)
