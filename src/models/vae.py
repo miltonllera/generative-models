@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from .stochastic import DiagonalGaussian, HomoscedasticGaussian
+from .stochastic import DiagonalGaussian, HomoscedasticGaussian, PosteriorGaussian
 from .convolution import CNN, tCNN
 from .mlp import create_mlp, xavier_normal_init_, kaiming_normal_init_
 from .utils import load_model as load
@@ -16,8 +16,8 @@ def get_latent(latent_type):
 
 
 class VAE(nn.Module):
-    def __init__(self, input_size, encoder_sizes,
-                 latent_size, latent_type='diagonal'):
+    def __init__(self, input_size, encoder_sizes, latent_size,
+                 batch_norm=False, latent_type='diagonal'):
 
         super(VAE, self).__init__()
 
@@ -28,10 +28,8 @@ class VAE(nn.Module):
 
         # Encoder MLP
         self.encoder = create_mlp(input_size, encoder_sizes,
+                                  batch_norm=batch_norm,
                                   init=kaiming_normal_init_)
-
-        self.encoder.add_module(str(len(self.encoder)), 
-                                DivNorm(output_shift=0.5))
 
         # Latent representation
         latent_constructor = get_latent(latent_type)
@@ -40,9 +38,10 @@ class VAE(nn.Module):
             latent_size)
 
         # Decoder MLP
-        self.decoder = create_mlp(
-            latent_size, list(reversed(encoder_sizes)), input_size,
-            init=kaiming_normal_init_)
+        decoder_sizes = list(reversed(encoder_sizes))
+        self.decoder = create_mlp(latent_size, decoder_sizes, input_size,
+                                  batch_norm=batch_norm,
+                                  init=kaiming_normal_init_)
 
         self.input_size = input_size
 
@@ -86,7 +85,7 @@ class VAE(nn.Module):
     def sample(self, inputs=None, n_samples=1):
         """
         Sample from the prior distribution or the conditional posterior
-        learned by the model. If no input is given the output will have 
+        learned by the model. If no input is given the output will have
         size (n_samples, latent_size) and if mu and logvar are given it
         will have size (batch_size, n_samples, latent size)
         """
@@ -98,9 +97,67 @@ class VAE(nn.Module):
         return self.latent.sample(h, n_samples)
 
 
+class LadderVAE(nn.Module):
+    def __init__(self, input_size, encoder_sizes, latent_sizes,
+                 batch_norm=False):
+        super().__init__()
+        self.input_size = input_size
+        self.latent_sizes = latent_sizes
+
+        encoders, decoders, latents = [], [], []
+
+        for i, sizes in enumerate(encoder_sizes):
+            enc = create_mlp(input_size, sizes)
+
+            if i + 1 < len(latent_sizes):
+                lat = PosteriorGaussian(sizes[-1], latent_sizes[i])
+            else:
+                lat = DiagonalGaussian(sizes[-1], latent_sizes[i])
+
+            input_size = sizes[-1]
+
+            if i == 0:
+                sizes = list(reversed(sizes))
+                dec = create_mlp(latent_sizes[i], sizes, input_size,
+                                 batch_norm=batch_norm)
+            else:
+                sizes = list(reversed(sizes)) + [2 * latent_sizes[-1]]
+                dec = create_mlp(latent_sizes[i], sizes, batch_norm=batch_norm)
+
+            encoders.append(enc)
+            decoders.append(dec)
+            latents.append(lat)
+
+        self.encoders = nn.ModuleList(encoders)
+        self.latents = nn.ModuleList(latents)
+        self.decoders = nn.ModuleList(decoders)
+
+    def forward(self, inputs):
+        hidden, params = [], []
+
+        for enc in self.encoders:
+            inputs = enc(inputs)
+            hidden.append(inputs)
+
+        p, z = self.latents[-1](hidden[-1])
+        h_tdown = self.decoders[-1](z)
+        params.append(p)
+
+        for i in range(len(self.latents)):
+            lat = self.latents[-(2 + i)]
+            dec = self.decoders[-(2 + i)]
+            h_bup = hidden[-(2 + i)]
+
+            p, z = lat((h_bup, h_tdown.chunk(2, 1)))
+            h_tdown = dec(z)
+            params.append(p)
+
+        return params, h_tdown
+
+
 class cVAE(nn.Module):
     def __init__(self, input_size, kernels, pools, encoder_sizes,
-                 latent_size, latent_type='diagonal'):
+                 latent_size, batch_norm=False, latent_type='diagonal'):
         super().__init__()
 
         if isinstance(encoder_sizes, int) and encoder_sizes:
@@ -109,13 +166,13 @@ class cVAE(nn.Module):
             encoder_sizes = []
 
         conv = CNN(input_size, kernels, pools,
-               dropout=0.0, non_linearity='relu')
+               batch_norm=batch_norm, non_linearity='relu')
 
         conv_out_features = conv.out_shape
 
         # Encoder MLP
         encoder = create_mlp(conv_out_features, encoder_sizes,
-                                  init=kaiming_normal_init_)
+                             batch_norm=batch_norm, init=kaiming_normal_init_)
 
         self.encoder = nn.Sequential(conv, encoder)
 
@@ -126,12 +183,13 @@ class cVAE(nn.Module):
             latent_size)
 
         # Decoder
-        decoder = create_mlp(latent_size, list(reversed(encoder_sizes)), 
-                             conv_out_features, init=kaiming_normal_init_)
+        dec_sizes = list(reversed(encoder_sizes)) + [conv_out_features]
+        decoder = create_mlp(latent_size, dec_sizes, batch_norm=batch_norm,
+                             init=kaiming_normal_init_)
 
         deconv = tCNN(input_size, kernels, pools,
-                      dropout=0.0, non_linearity='relu')
-        
+                      batch_norm=batch_norm, non_linearity='relu')
+
         self.decoder = nn.Sequential(decoder, deconv)
         self.input_size = input_size
 
@@ -175,7 +233,7 @@ class cVAE(nn.Module):
     def sample(self, inputs=None, n_samples=1):
         """
         Sample from the prior distribution or the conditional posterior
-        learned by the model. If no input is given the output will have 
+        learned by the model. If no input is given the output will have
         size (n_samples, latent_size) and if mu and logvar are given it
         will have size (batch_size, n_samples, latent size)
         """
@@ -187,18 +245,19 @@ class cVAE(nn.Module):
         return self.latent.sample(h, n_samples)
 
 
+
 def init_vae(model_type, input_size, encoder_sizes, latent_size,
              latent_type='diagonal', kernels=None, pools=None,
              device='cpu'):
     if model_type == 'vae':
         model = VAE(input_size, encoder_sizes, latent_size, latent_type)
     if model_type == 'cvae':
-        model = cVAE(input_size, kernels, pools, encoder_sizes, 
+        model = ConvVAE(input_size, kernels, pools, encoder_sizes,
                      latent_size, latent_type)
     return model.to(device=device)
 
 
-def load_vae(params, state, device):    
+def load_vae(params, state, device):
     m = init_vae(device=device, **params)
     m.load_state_dict(state)
     return m
