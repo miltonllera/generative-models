@@ -27,7 +27,6 @@ def _init(m, init):
 xavier_normal_init_ = lambda m: _init(m, nn.init.xavier_normal_)
 kaiming_normal_init_ = lambda m: _init(m, nn.init.kaiming_normal_)
 
-
 def create_mlp(input_size, hidden_sizes, output_size=None, nonlinearity='relu',
                dropout=0.0, batch_norm=False, init=None):
     sizes = [input_size] + hidden_sizes
@@ -37,15 +36,15 @@ def create_mlp(input_size, hidden_sizes, output_size=None, nonlinearity='relu',
 
     layers = []
     for i in range(1, len(sizes)):
-        layers.append(nn.Linear(sizes[i-1], sizes[i], bias=not batch_norm))
+        layers.extend([nn.Linear(sizes[i-1], sizes[i], 
+                                bias=(not batch_norm and i)),
+                       nonlinearity()])
+
+        if dropout > 0:
+            layers.append(nn.Dropout(dropout))
 
         if batch_norm:
             layers.append(nn.BatchNorm1d(sizes[i]))
-
-        layers.append(nonlinearity())
-
-        if not batch_norm and dropout > 0:
-            layers.append(nn.Dropout(dropout))
 
     if output_size:
         layers.append(nn.Linear(sizes[-1], output_size))

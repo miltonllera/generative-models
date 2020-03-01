@@ -1,9 +1,7 @@
 import torch
 import torch.nn as nn
-from .stochastic import DiagonalGaussian, HomoscedasticGaussian, PosteriorGaussian
 from .convolution import CNN, tCNN
 from .mlp import create_mlp, xavier_normal_init_, kaiming_normal_init_
-from .utils import load_model as load
 from .normalization import DivNorm
 
 
@@ -16,7 +14,7 @@ def get_latent(latent_type):
 
 
 class VAE(nn.Module):
-    def __init__(self, input_size, encoder_sizes, latent_size,
+    def __init__(self, input_size, encoder_sizes, latent_size, 
                  batch_norm=False, latent_type='diagonal'):
 
         super(VAE, self).__init__()
@@ -28,7 +26,7 @@ class VAE(nn.Module):
 
         # Encoder MLP
         self.encoder = create_mlp(input_size, encoder_sizes,
-                                  batch_norm=batch_norm,
+                                  batch_norm=batch_norm, 
                                   init=kaiming_normal_init_)
 
         # Latent representation
@@ -38,10 +36,9 @@ class VAE(nn.Module):
             latent_size)
 
         # Decoder MLP
-        decoder_sizes = list(reversed(encoder_sizes))
-        self.decoder = create_mlp(latent_size, decoder_sizes, input_size,
-                                  batch_norm=batch_norm,
-                                  init=kaiming_normal_init_)
+        self.decoder = create_mlp(latent_size, list(reversed(encoder_sizes)),
+                                 input_size, batch_norm=batch_norm, 
+                                 init=kaiming_normal_init_)
 
         self.input_size = input_size
 
@@ -260,6 +257,3 @@ def load_vae(params, state, device):
     m = init_vae(device=device, **params)
     m.load_state_dict(state)
     return m
-
-
-load_from_file = lambda folder, device: load(folder, load_vae, device='cuda')
