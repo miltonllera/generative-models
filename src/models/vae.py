@@ -187,12 +187,13 @@ class cVAE(nn.Module):
 
 def init_vae(model_type, input_size, encoder_sizes, latent_size,
              latent_type='diagonal', kernels=None, pools=None,
-             device='cpu'):
+             batch_norm=False, device='cpu'):
     if model_type == 'vae':
-        model = VAE(input_size, encoder_sizes, latent_size, latent_type)
+        model = VAE(input_size, encoder_sizes, latent_size, 
+                    batch_norm, latent_type)
     if model_type == 'cvae':
         model = cVAE(input_size, kernels, pools, encoder_sizes, 
-                     latent_size, latent_type)
+                     latent_size, batch_norm, latent_type)
     return model.to(device=device)
 
 
