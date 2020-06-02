@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
-import ignite.metrics as M  
+import ignite.metrics as M
 from torch.nn.functional import binary_cross_entropy_with_logits as logits_bce
 from torch.nn.functional import mse_loss
 from torch.nn.modules.loss import _Loss
@@ -30,7 +30,7 @@ class ConstrainedELBO(_Loss):
         KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
         return (recons_loss + self.gamma * (KLD - self.capacity).abs())/target.size(0)
 
-    
+
 class ELBO(ConstrainedELBO):
     def __init__(self, reconstruction_loss='bce'):
         super().__init__(reconstruction_loss, 1.0, 0.0)
@@ -79,8 +79,10 @@ def get_loss(loss):
         return ConstrainedELBO(**params)
     elif loss_fn == 'reconstruction':
         return ConstrainedELBO(**params, gamma=0.0)
-    elif loss_fn == 'xent':
+    elif loss_fn == 'bxent':
         return nn.BCEWithLogitsLoss(**params)
+    elif loss_fn == 'xent':
+        return nn.CrossEntropyLoss(**params)
     else:
         raise ValueError('Unknown loss function {}'.format(loss_fn))
 
@@ -93,8 +95,10 @@ def get_metric(metric):
         return M.Loss(BetaELBO(**params))
     elif metric == 'reconstruction':
         return M.Loss(ConstrainedELBO(**params, gamma=0.0))
-    elif metric == 'xent':
+    elif metric == 'bxent':
         return M.Loss(nn.BCEWithLogitsLoss(**params))
+    elif metric == 'xent':
+        return M.Loss(nn.CrossEntropyLoss(**params))
     elif metric == 'acc':
         return M.Accuracy(**params)
     raise ValueError('Unrecognized metric {}.'.format(metric))
