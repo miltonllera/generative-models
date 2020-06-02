@@ -16,19 +16,26 @@ def get_nonlinearity(nonlinearity):
     raise ValueError('Unrecognized non linearity: {}'.format(nonlinearity))
 
 
-def _init(m, init):
+def xavier_normal_init_(m):
     if type(m) == nn.Linear:
-        init(m.weight)
+        torch.nn.init.xavier_normal_(m.weight)
         try:
             m.bias.data.zero_()
         except AttributeError:
             pass
 
-xavier_normal_init_ = lambda m: _init(m, nn.init.xavier_normal_)
-kaiming_normal_init_ = lambda m: _init(m, nn.init.kaiming_normal_)
+
+def kaiming_normal_init_(m):
+    if type(m) == nn.Linear:
+        torch.nn.init.kaiming_normal_(m.weight)
+        try:
+            m.bias.data.zero_()
+        except AttributeError:
+            pass
+
 
 def create_mlp(input_size, hidden_sizes, output_size=None, nonlinearity='relu',
-               dropout=0.0, batch_norm=False, init=None):
+               batch_norm=False, dropout=0.0, init=None):
     sizes = [input_size] + hidden_sizes
 
     if isinstance(nonlinearity, str):
@@ -36,7 +43,7 @@ def create_mlp(input_size, hidden_sizes, output_size=None, nonlinearity='relu',
 
     layers = []
     for i in range(1, len(sizes)):
-        layers.extend([nn.Linear(sizes[i-1], sizes[i], 
+        layers.extend([nn.Linear(sizes[i-1], sizes[i],
                                 bias=(not batch_norm and i)),
                        nonlinearity()])
 

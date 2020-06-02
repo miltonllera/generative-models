@@ -63,8 +63,8 @@ def maxpool2d_out_shape(in_shape, pool_shape, stride, padding):
     return in_channels, hout, wout
 
 
-def get_conv_layer_out_shape(input_shape, kernels, pools):
-    out_shape = input_shape
+def get_conv_layer_out_shape(input_size, kernels, pools):
+    out_shape = input_size
 
     for k, p in zip(kernels, pools):
         out_shape = conv2d_out_shape(out_shape, *k)
@@ -75,7 +75,7 @@ def get_conv_layer_out_shape(input_shape, kernels, pools):
 
 
 class CNN(nn.Module):
-    def __init__(self, input_shape, kernels, pools, non_linearity='relu',
+    def __init__(self, input_size, kernels, pools, non_linearity='relu',
                  batch_norm=False, dropout=0.0):
         super().__init__()
         if pools is None:
@@ -85,17 +85,16 @@ class CNN(nn.Module):
             raise ValueError(
                 'Number of pooling  and convolution layers do not match')
 
-        in_chann, h, w = input_shape
+        in_chann, h, w = input_size
         non_linearity = get_nonlinearity(non_linearity)
 
         conv_layers = []
         for conv_shape, pooling_params in zip(kernels, pools):
-            conv_layers.append(nn.Conv2d(in_chann, *conv_shape))
+            conv_layers.extend([nn.Conv2d(in_chann, *conv_shape),
+                                non_linearity()])
 
             if batch_norm:
                 conv_layers.append(nn.BatchNorm2d(conv_shape[0]))
-
-            conv_layers.append(non_linearity())
 
             if pooling_params is not None:
                 conv_layers.append(create_pool(*pooling_params))
@@ -103,12 +102,12 @@ class CNN(nn.Module):
             in_chann = conv_shape[0]
 
         self.conv_layers = nn.Sequential(*conv_layers)
-        self.input_shape = input_shape
-        self.out_shape = np.prod(get_conv_layer_out_shape(
-            input_shape, kernels, pools))
+        self.input_size = input_size
+        self.output_size = np.prod(get_conv_layer_out_shape(
+            input_size, kernels, pools))
 
     def forward(self, inputs):
-        inputs = inputs.view(-1, *self.input_shape)
+        inputs = inputs.view(-1, *self.input_size)
         outputs = self.conv_layers(inputs)
         return torch.flatten(outputs, start_dim=1)
 
@@ -121,28 +120,28 @@ def _bilinear_usample(in_shape, kernel, pool):
     return usample, in_shape
 
 
-class tCNN(nn.Module):
-    def __init__(self, input_shape, kernels, pools, non_linearity='relu',
+class TransposedCNN(nn.Module):
+    def __init__(self, input_size, kernels, pools, non_linearity='relu',
                  batch_norm=False, dropout=0.0):
         super().__init__()
         if pools is None:
             pools = len(kernels) * [None]
 
-        conv_layers, layer_input = [], input_shape
+        conv_layers, layer_input = [], input_size
         non_linearity = get_nonlinearity(non_linearity)
 
-        in_chann, h, w = input_shape
+        in_chann, h, w = input_size
 
         for kernel, pool in zip(kernels, pools):
             out_channel = kernel[0]
 
-            conv_layers.append(non_linearity())
-
             if batch_norm:
                 conv_layers.append(nn.BatchNorm2d(in_chann))
 
-            conv_layers.append(nn.ConvTranspose2d(out_channel,
-                                                  in_chann, *kernel[1:]))
+            conv_layers.extend([non_linearity(),
+                                nn.ConvTranspose2d(out_channel, in_chann,
+                                                   *kernel[1:])
+                                ])
 
             if pool is not None:
                 upsample, layer_input = _bilinear_usample(layer_input,
@@ -156,10 +155,10 @@ class tCNN(nn.Module):
             conv_layers.pop()
 
         self.tconv_layers = nn.Sequential(*conv_layers)
-        self.input_shape = get_conv_layer_out_shape(input_shape, kernels, pools)
-        self.out_shape = input_shape
+        self.input_size = get_conv_layer_out_shape(input_size, kernels, pools)
+        self.output_size = input_size
 
     def forward(self, inputs):
-        inputs = inputs.view(-1, *self.input_shape)
+        inputs = inputs.view(-1, *self.input_size)
         outputs = self.tconv_layers(inputs)
         return torch.flatten(outputs, start_dim=1)
