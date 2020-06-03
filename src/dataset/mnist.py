@@ -22,7 +22,7 @@ class UnsupervisedMNIST:
             tuple: (image, target) where target is the same image
         """
         img = self.data[index]
-        img = target = Image.fromarray(img.numpy(), mode='L')
+        img = Image.fromarray(img.numpy(), mode='L')
 
         if self.transform is not None:
             img = self.transform(img)
@@ -32,49 +32,50 @@ class UnsupervisedMNIST:
         return img, target
 
 
-def load_raw(data_path, input_size, download=False, transform=None):
+def load_raw(data_path, input_size, train=True, download=False, transform=None):
     transform = transform or trans.Compose([
         trans.ToTensor(),
         trans.Lambda(lambda x: x.view(input_size))
     ])
 
-    train_data = dataset.MNIST(
-        root=data_path, train=True, transform=transform, download=download)
-    test_data = dataset.MNIST(
-        root=data_path, train=False, transform=transform, download=download)
+    data = dataset.MNIST(
+        root=data_path, train=train, transform=transform, download=download)
 
-    return train_data, test_data
+    return data
 
 
-def load_unsupervised(data_path, input_size, download=False, transform=None):
-    train_data, test_data = load_raw(data_path, input_size, download, transform)
+def load_unsupervised(data_path, input_size, train=True, download=False, transform=None):
+    data = load_raw(data_path, input_size, train, download, transform)
 
-    train_data = UnsupervisedMNIST(train_data.data, train_data.transform)
-    test_dataa = UnsupervisedMNIST(test_data.data, test_data.transform)
+    data = UnsupervisedMNIST(data.data, data.transform)
 
-    return train_data, test_data
+    return data
 
 
 def load_mnist(data_path, input_size, batch_size, val_split=0.2,
-        shuffle=True, download=True, supervised=True
+               shuffle=True, train=True, download=True, supervised=True
     ):
 
     if supervised:
-        train_raw, test_raw = load_raw(data_path, input_size, download)
+        raw = load_raw(data_path, input_size, train, download)
     else:
-        train_raw, test_raw = load_unsupervised(data_path, input_size, download)
+        raw = load_unsupervised(data_path, input_size,train, download)
 
-    # Split train data into training and validation sets
-    N = len(train_raw)
-    val_size = int(N * val_split)
-    train_raw, validation_raw = random_split(
-        train_raw, [N - val_size, val_size])
+    if train:
+        # Split train data into training and validation sets
+        N = len(raw)
+        val_size = int(N * val_split)
+        train_raw, validation_raw = random_split(
+            raw, [N - val_size, val_size])
 
-    train_data = DataLoader(
-        train_raw, batch_size=batch_size, shuffle=shuffle)
-    validation_data = DataLoader(
-        validation_raw, batch_size=batch_size, shuffle=False)
-    test_data = DataLoader(
-        test_raw, batch_size=batch_size, shuffle=False)
+        train_data = DataLoader(
+            train_raw, batch_size=batch_size, shuffle=shuffle)
+        validation_data = DataLoader(
+            validation_raw, batch_size=batch_size, shuffle=False)
 
-    return train_data, validation_data, test_data
+
+        return train_data, validation_data
+
+    test_data = DataLoader(raw, batch_size=batch_size, shuffle=False)
+
+    return test_data
