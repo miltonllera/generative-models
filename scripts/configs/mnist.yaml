@@ -1,0 +1,8 @@
+# Dataset for sequential MNIST
+
+data_path: '../../data/exp_raw/'
+input_size: 784
+n_classes: 10
+val_split: 0.2
+shuffle: True
+download: True
