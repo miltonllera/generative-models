@@ -31,6 +31,12 @@ class ConstrainedELBO(_Loss):
         return (recons_loss + self.gamma * (KLD - self.capacity).abs())/target.size(0)
 
 
+class VQELBO(ConstrainedELBO):
+    def forward(self, input, target):
+        params, reconstruction = input
+        return self.recons_loss(reconstruction, target, reduction='sum')
+
+
 class ELBO(ConstrainedELBO):
     def __init__(self, reconstruction_loss='bce'):
         super().__init__(reconstruction_loss, 1.0, 0.0)
@@ -83,6 +89,8 @@ def get_loss(loss):
         return nn.BCEWithLogitsLoss(**params)
     elif loss_fn == 'xent':
         return nn.CrossEntropyLoss(**params)
+    elif loss_fn == 'mse':
+        return nn.MSELoss(**params)
     else:
         raise ValueError('Unknown loss function {}'.format(loss_fn))
 
