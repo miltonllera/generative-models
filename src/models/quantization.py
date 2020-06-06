@@ -8,31 +8,39 @@ def distmin(inputs, distance, idx):
     dist.backward(gradient=torch.ones_like(dist))
 
 
-class EMAUpdater():
-    __slots__ = '_N', '_m', 'codebook', 'gamma'
+class EMAUpdater(nn.Module):
+    # __slots__ = '_N', '_m', 'codebook', 'gamma'
 
     def __init__(self, codebook, gamma=0.99):
         super().__init__()
 
         book_size, code_size = codebook.size()
-        self._N = torch.ones(book_size, dtype=torch.LongTensor)
-        self._m = torch.zeros((book_size, code_size), dtype=torch.float32)
+        N = torch.ones((book_size, 1), dtype=torch.float32)
+        m = torch.zeros((book_size, code_size), dtype=torch.float32)
+
+        self.register_buffer('_N', N)
+        self.register_buffer('_m', m)
+
         self.codebook = codebook
-        self.codebook.requires_grad_(False)
+        # self.codebook.requires_grad_(False)
         self.gamma = gamma
 
     def __call__(self, inputs, distances, idx):
         # Compute counts
         embedding_idx, counts = torch.unique(idx, return_counts=True)
         new_counts = torch.zeros_like(self._N)
+
+        counts = counts.to(dtype=torch.float32).unsqueeze_(1)
+
         new_counts[embedding_idx] = counts
 
         # Ceate a mask of size (n_embeddings, batch_size) where for each each
         # row `i` the columns are 1 if the corresponding input are assigned to
         # embedding `i`. A matrix multiplication produces the aggregates.
         batch_size = inputs.size(0)
-        mask = self._m.new_zeros((self.codebook.size(0), batch_size))
+        mask = inputs.new_zeros((self.codebook.size(0), batch_size))
         mask[idx, torch.arange(batch_size)] = 1.0
+
         new_m = mask.matmul(inputs)
 
         # Update moving averages
@@ -49,8 +57,10 @@ class EMAUpdater():
 
 class Quantization(nn.Module):
     def __init__(self, book_size, code_size, beta=0.25, update_type='expmavg'):
-        if update not in ['expmavg', 'distmin']:
+        if update_type not in ['expmavg', 'distmin']:
             raise ValueError('Unrecognized update {}'.format(update))
+
+        super().__init__()
 
         self.beta = beta
         self.update_type = update_type
@@ -58,7 +68,7 @@ class Quantization(nn.Module):
                                                  dtype=torch.float32))
 
         if update_type == 'expmavg':
-            self.update_code = EMAUpdater(codebook)
+            self.update_code = EMAUpdater(self.codebook)
         elif update_type == 'euclid':
             self.update_code = distmin
         else:
@@ -78,17 +88,19 @@ class Quantization(nn.Module):
     def reset_parameters(self):
         nn.init.normal_(self.codebook)
         try:
-            update_code.reset_parameters()
+            self.update_code.reset_parameters()
         except AttributeError:
             pass
 
     def forward(self, inputs):
-        detached_input = inputs.unsqueeze(0).detach()
+        detached_input = inputs.detach()
         embeddings = self.codebook.unsqueeze(0)
 
         # Input to cdist is BxPxM, BxRxM so we unsqueeze dim 0
         # So we have inputs 1xNxD, 1xBxD and output 1xNxB
-        dist = torch.cdist(detached_input, embeddings, p=2)
+        # print(detached_input.size())
+        # print(embeddings.size())
+        dist = torch.cdist(detached_input.unsqueeze(0), embeddings, p=2)
         idx = dist.squeeze_().argmax(dim=1)
         quantized = self.codebook[idx] # z_q
 
@@ -98,12 +110,13 @@ class Quantization(nn.Module):
             # backpropagate the gradient w.r.t. the decoder through the input.
             def propagate_gradients(grad):
                 # nonlocal inputs, detached_inputs, quantized, dist, idx
-                self.update_code(detached_inputs, dist, idx)
-                commitment_loss = self.beta * (inputs - quantized.detach_()).pow(2)
-                commitment_loss.backward(gradient=grad)
-                hndl.remove()
+                self.update_code(detached_input, dist, idx)
+                with torch.enable_grad():
+                    commitment_loss = self.beta * (inputs - quantized.detach()).pow(2)
+                    commitment_loss.backward(gradient=grad, retain_graph=True)
 
-            hndl = quantized.register_hook(propagate_gradients)
+            quantized = inputs + (quantized - inputs).detach_()
+            quantized.register_hook(propagate_gradients)
 
         return quantized
 
