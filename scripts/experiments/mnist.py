@@ -17,6 +17,7 @@ from ingredients.training import attach_lr_scheduler, attach_model_checkpointing
 
 # Load configs
 from configs.cnnvae import cnn_vae
+from configs.vqae import vqae
 
 
 # Set up experiment
@@ -49,7 +50,7 @@ training.add_config(loss=vae_loss, metrics=[reconstruction_loss])
 
 # Model configs
 model.named_config(cnn_vae)
-
+model.named_config(vqae)
 
 # Run experiment
 @ex.automain
@@ -68,7 +69,7 @@ def main(_config, save_folder):
     vae = init_model(init_fn=create_conv_vae, device=device)
 
     # Init metrics
-    loss, metrics = init_metrics(vae_loss, [reconstruction_loss])
+    loss, metrics = init_metrics()
     optimizer = init_optimizer(params=vae.parameters())
 
     # Init engines
@@ -95,7 +96,7 @@ def main(_config, save_folder):
     validator.add_event_handler(Events.EPOCH_COMPLETED, log_validation)
 
     # Save best model
-    model_checkpoint = attach_model_checkpointing(validator, 'reconstruction',
+    model_checkpoint = attach_model_checkpointing(validator, 'recons_nll',
                                                   vae, save_folder)
 
     trainer.run(training_set, max_epochs=max_epochs)

@@ -88,7 +88,6 @@ class BetaScheduler:
 
 def get_loss(loss):
     loss_fn, params = loss
-    print(loss_fn)
     if loss_fn == 'elbo':
         return ELBO(**params)
     elif loss_fn == 'beta-elbo':
