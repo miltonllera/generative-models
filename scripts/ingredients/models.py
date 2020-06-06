@@ -48,8 +48,8 @@ def show():
     print(model)
 
 
-# Convolutional VAE
-class ConvVAE(nn.Module):
+# Convolutional AutoEncoder
+class CNNAutoEncoder(nn.Module):
     def __init__(self, vae, cnn, transposed_cnn):
         super().__init__()
         self.cnn = cnn
@@ -97,13 +97,13 @@ class VAEPredictor(nn.Module):
 
 
 @model.capture
-def create_conv_vae(vae_type, input_size, kernels, pools, encoder_sizes,
+def create_conv_vae(autoencoder, input_size, kernels, pools, encoder_sizes,
                     latent_size, batch_norm=False):
     cnn = CNN(input_size, kernels, pools, batch_norm=batch_norm)
 
-    vae = init_vae(vae_type, np.prod(cnn.output_size), encoder_sizes, latent_size,
-                   batch_norm=batch_norm, raw_output=False)
+    vae = init_vae(autoencoder, np.prod(cnn.output_size), encoder_sizes,
+                   latent_size, batch_norm=batch_norm, raw_output=False)
 
     tCNN = TransposedCNN(input_size, kernels, pools, batch_norm=batch_norm)
 
-    return ConvVAE(vae, cnn, tCNN)
+    return CNNAutoEncoder(vae, cnn, tCNN)

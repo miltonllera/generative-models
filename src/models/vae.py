@@ -5,17 +5,10 @@ from .quantization import Quantization
 from .mlp import create_mlp, xavier_normal_init_, kaiming_normal_init_
 
 
-def get_latent(latent_type):
-    if latent_type == 'diag-gauss':
-        return DiagonalGaussian
-    elif latent_type == 'homoscedastic':
-        return HomoscedasticGaussian
-    raise ValueError('Unrecognized latent layer {}'.format(latent_type))
-
 
 class AutoEncoder(nn.Module):
     def __init__(self, input_size, encoder_sizes, latent_size,
-                 latent_type, batch_norm=False, raw_output=True):
+                 latent, batch_norm=False, raw_output=True):
 
         super().__init__()
 
@@ -30,10 +23,7 @@ class AutoEncoder(nn.Module):
                                   init=kaiming_normal_init_)
 
         # Latent representation
-        latent_constructor = get_latent(latent_type)
-        self.latent = latent_constructor(
-            encoder_sizes[-1] if len(encoder_sizes) else input_size,
-            latent_size)
+        self.latent = latent
 
         if raw_output:
             decoder_sizes = list(reversed(encoder_sizes))
@@ -86,8 +76,11 @@ class VAE(AutoEncoder):
     def __init__(self, input_size, encoder_sizes, latent_size,
                  batch_norm=False, raw_output=True):
 
+        latent_input = encoder_sizes[-1] if len(encoder_sizes) else input_size
+        latent = DiagonalGaussian(latent_input, latent_size)
+
         super().__init__(input_size, encoder_sizes, latent_size,
-                         'diag-gauss', batch_norm, raw_output)
+                         latent, batch_norm, raw_output)
 
     def reset_parameter(self):
         self.encoder.apply(kaiming_normal_init_)
@@ -112,9 +105,11 @@ class VAE(AutoEncoder):
 class VQAE(AutoEncoder):
     def __init__(self, input_size, encoder_sizes, latent_size,
                  batch_norm=False, raw_output=True):
+        code_size = encoder_sizes[-1] if len(encoder_sizes) else input_size
+        latent = Quantization(latent_size, code_size)
 
-        super().__init__(input_size, encoder_sizes, latent_size,
-                         'quantized', batch_norm, raw_output)
+        super().__init__(input_size, encoder_sizes, code_size,
+                         latent, batch_norm, raw_output)
 
     def reset_parameter(self):
         self.encoder.apply(kaiming_normal_init_)
@@ -124,7 +119,7 @@ class VQAE(AutoEncoder):
     def forward(self, input):
         h = self.encoder(input)
         z = self.latent(h)
-        return self.decoder(z)
+        return z, self.decoder(z)
 
     def embed(self, input):
         h = self.encoder(input)
