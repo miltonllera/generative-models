@@ -1,11 +1,22 @@
 import csv
 import numpy as np
+import torch
+import ignite.handlers as hdlrs
 from ignite.engine import Events
-from ignite.handlers import *
+from ignite.handlers import EarlyStopping
 from tqdm import tqdm
 
 
-class LRSchedulerHandler(object):
+class ModelCheckpoint(hdlrs.ModelCheckpoint):
+    @property
+    def best_model(self):
+        with open(self._saved[-1][1][0], mode='rb') as f:
+            state_dict = torch.load(f)
+
+        return state_dict
+
+
+class LRScheduler(object):
     def __init__(self, scheduler, loss):
         self.scheduler = scheduler
         self.loss = loss
@@ -19,7 +30,7 @@ class LRSchedulerHandler(object):
         return self
 
 
-class TracerHandler(object):
+class Tracer(object):
     def __init__(self, val_metrics, save_path=None, save_interval=1):
         self.metrics = ['loss']
         self.loss = []
@@ -82,7 +93,7 @@ class TracerHandler(object):
                     wr.writerow([i + 1, v])
 
 
-class LoggerHandler(object):
+class Logger(object):
     def __init__(self, loader, log_interval, pbar=None, desc=None):
         n_batches = len(loader)
         self.desc = 'iteration-loss: {:.5f}' if desc is None else desc

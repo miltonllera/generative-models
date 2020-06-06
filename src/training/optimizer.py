@@ -1,6 +1,7 @@
 import torch.optim as optim
 import torch.optim.lr_scheduler as lr_scheduler
 
+
 def init_optimizer(optimizer, params, lr=0.01, l2_norm=0.0, **kwargs):
 
     if optimizer == 'adam':
@@ -30,7 +31,7 @@ def init_optimizer(optimizer, params, lr=0.01, l2_norm=0.0, **kwargs):
     return optimizer
 
 
-def init_lr_scheduler(optimizer, scheduler, lr_decay, 
+def init_lr_scheduler(optimizer, scheduler, lr_decay,
                       patience, threshold=1e-4, min_lr=1e-9):
 
     if scheduler == 'reduce-on-plateau':
