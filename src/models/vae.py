@@ -82,12 +82,12 @@ class AutoEncoder(nn.Module):
         return params, self.decoder(z)
 
 
-class VAE(nn.Module):
+class VAE(AutoEncoder):
     def __init__(self, input_size, encoder_sizes, latent_size,
                  batch_norm=False, raw_output=True):
 
         super().__init__(input_size, encoder_sizes, latent_size,
-                         batch_norm, 'diag-gauss', raw_output)
+                         'diag-gauss', batch_norm, raw_output)
 
     def reset_parameter(self):
         self.encoder.apply(kaiming_normal_init_)
@@ -114,7 +114,7 @@ class VQAE(AutoEncoder):
                  batch_norm=False, raw_output=True):
 
         super().__init__(input_size, encoder_sizes, latent_size,
-                         batch_norm, 'quantized', raw_output)
+                         'quantized', batch_norm, raw_output)
 
     def reset_parameter(self):
         self.encoder.apply(kaiming_normal_init_)
