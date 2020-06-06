@@ -19,7 +19,7 @@ def thresholded_output_transform(output):
 
 
 vae_loss = 'elbo', {'reconstruction_loss': 'bce'}
-reconstruction_loss = 'reconstruction', {'reconstruction_loss': 'bce'}
+reconstruction_loss = 'recons_nll', {'loss': 'bce'}
 bvae_loss = 'beta-elbo', {'reconstruction_loss': 'bce', 'beta': 4.0}
 bxent_loss = 'bxent', {}
 xent_loss = 'xent', {}
@@ -34,6 +34,8 @@ training.add_named_config('binclass', loss=bxent_loss, metrics=[bxent_loss, accu
 training.add_named_config('class', loss=xent_loss, metrics=[xent_loss, accuracy])
 training.add_named_config('decode_bce', loss=bxent_loss, metrics=[bxent_loss])
 training.add_named_config('decode_mse', loss=mse_loss, metrics=[mse_loss])
+training.add_named_config('recons_nll', loss=reconstruction_loss,
+                                        metrics=[reconstruction_loss])
 
 
 init_optimizer =  training.capture(init_optimizer)
@@ -106,10 +108,6 @@ def attach_early_stopper(trainer, validator, metric_name, patience):
     validator.add_event_handler(Events.COMPLETED, stopper)
 
     return stopper
-
-
-
-
 
 def setup_training(
         model, validation_data, optim, loss, metrics, lr, l2_norm,

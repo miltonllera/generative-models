@@ -31,10 +31,21 @@ class ConstrainedELBO(_Loss):
         return (recons_loss + self.gamma * (KLD - self.capacity).abs())/target.size(0)
 
 
-class VQELBO(ConstrainedELBO):
+class ReconstructionNLL(_Loss):
+    def __init__(self, loss='bce'):
+        super().__init__(reduction='batchmean')
+        if loss == 'bce':
+            recons_loss = logits_bce
+        elif loss == 'mse':
+            recons_loss = mse_loss
+        elif not callable(reconstruction_loss):
+            raise ValueError('Unrecognized reconstruction' \
+                             'loss {}'.format(reconstruction_loss))
+        self.loss = recons_loss
+
     def forward(self, input, target):
         params, reconstruction = input
-        return self.recons_loss(reconstruction, target, reduction='sum')
+        return self.loss(reconstruction, target, reduction='sum')
 
 
 class ELBO(ConstrainedELBO):
@@ -77,14 +88,15 @@ class BetaScheduler:
 
 def get_loss(loss):
     loss_fn, params = loss
+    print(loss_fn)
     if loss_fn == 'elbo':
         return ELBO(**params)
     elif loss_fn == 'beta-elbo':
         return BetaELBO(**params)
     elif loss_fn == 'constrained-elbo':
         return ConstrainedELBO(**params)
-    elif loss_fn == 'reconstruction':
-        return ConstrainedELBO(**params, gamma=0.0)
+    elif loss_fn == 'recons_nll':
+        return ReconstructionNLL(**params)
     elif loss_fn == 'bxent':
         return nn.BCEWithLogitsLoss(**params)
     elif loss_fn == 'xent':
@@ -101,8 +113,8 @@ def get_metric(metric):
         return M.MeanSquaredError(**params)
     elif metric == 'elbo':
         return M.Loss(BetaELBO(**params))
-    elif metric == 'reconstruction':
-        return M.Loss(ConstrainedELBO(**params, gamma=0.0))
+    elif metric == 'recons_nll':
+        return M.Loss(ReconstructionNLL(**params))
     elif metric == 'bxent':
         return M.Loss(nn.BCEWithLogitsLoss(**params))
     elif metric == 'xent':
@@ -112,8 +124,8 @@ def get_metric(metric):
     raise ValueError('Unrecognized metric {}.'.format(metric))
 
 
-def init_metrics(training_loss, metrics, rate_reg=0.0):
-    criterion = get_loss(training_loss)
+def init_metrics(loss, metrics, rate_reg=0.0):
+    criterion = get_loss(loss)
 
     # if rnn_eval:
     #     criterion = RNNLossWrapper(criterion)
