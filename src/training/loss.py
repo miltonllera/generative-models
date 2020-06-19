@@ -45,7 +45,7 @@ class ReconstructionNLL(_Loss):
 
     def forward(self, input, target):
         params, reconstruction = input
-        return self.loss(reconstruction, target, reduction='sum')
+        return self.loss(reconstruction, target, reduction='sum') / target.size(0)
 
 
 class ELBO(ConstrainedELBO):

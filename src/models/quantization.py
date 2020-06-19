@@ -56,7 +56,7 @@ class EMAUpdater(nn.Module):
 
 
 class Quantization(nn.Module):
-    def __init__(self, book_size, code_size, beta=0.25, update_type='expmavg'):
+    def __init__(self, book_size, code_size, beta=1.0, update_type='expmavg'):
         if update_type not in ['expmavg', 'distmin']:
             raise ValueError('Unrecognized update {}'.format(update))
 
@@ -83,14 +83,13 @@ class Quantization(nn.Module):
 
     @property
     def code_size(self):
-        return self.code_size.size(1)
+        return self.codebook.size(1)
 
     def reset_parameters(self):
-        nn.init.normal_(self.codebook)
-        try:
-            self.update_code.reset_parameters()
-        except AttributeError:
-            pass
+        lim = 1 / self.book_size
+        nn.init.uniform_(self.codebook, -lim, lim)
+        if isinstance(self.update_code, nn.Module):
+            self.update_code.reset_parameter()
 
     def forward(self, inputs):
         detached_input = inputs.detach()
@@ -105,18 +104,33 @@ class Quantization(nn.Module):
         quantized = self.codebook[idx] # z_q
 
         if self.training:
+
             # Propagate the gradients. First minimize input-embedding distance
             # by treating the latter as parameters in the computation. Then,
             # backpropagate the gradient w.r.t. the decoder through the input.
-            def propagate_gradients(grad):
+            def compute_commitment_loss(grad):
                 # nonlocal inputs, detached_inputs, quantized, dist, idx
+                # with torch.enable_grad():
+                    # detached_input.requires_grad_(True)
+                    # commit_loss = (detached_input - quantized.detach()).pow(2)
+                    # commit_loss = self.beta * commit_loss.mean(0).sum()
+                    # commit_loss.backward()
+
+                # self.update_code(detached_input, dist, idx)
+
+                # return grad + detached_input.grad
+
+                # Commit loss = beta * 1/N * \sum_N (input - quantized)^2
+                # Commit loss grad wrt input = beta * 2/N * (input - quantized)
+                size = inputs.size(0)
+                commit_loss_grad = 2 * self.beta * (inputs - quantized) / size
+
                 self.update_code(detached_input, dist, idx)
-                with torch.enable_grad():
-                    commitment_loss = self.beta * (inputs - quantized.detach()).pow(2)
-                    commitment_loss.backward(gradient=grad, retain_graph=True)
+
+                return grad + commit_loss_grad
 
             quantized = inputs + (quantized - inputs).detach_()
-            quantized.register_hook(propagate_gradients)
+            inputs.register_hook(compute_commitment_loss)
 
         return quantized
 

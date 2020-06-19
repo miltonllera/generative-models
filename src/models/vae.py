@@ -103,11 +103,10 @@ class VAE(AutoEncoder):
 
 
 class VQAE(AutoEncoder):
-    def __init__(self, input_size, encoder_sizes, latent_size,
-                 batch_norm=False, raw_output=True):
-        code_size = encoder_sizes[-1] if len(encoder_sizes) else input_size
-        latent = Quantization(latent_size, code_size)
-
+    def __init__(self, input_size, encoder_sizes, code_size, book_size,
+                 beta=0.25, batch_norm=False, raw_output=True):
+        latent = Quantization(book_size, code_size, beta=beta)
+        # encoder_sizes.append(code_size)
         super().__init__(input_size, encoder_sizes, code_size,
                          latent, batch_norm, raw_output)
 
