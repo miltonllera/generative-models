@@ -75,90 +75,84 @@ def get_conv_layer_out_shape(input_size, kernels, pools):
 
 
 class CNN(nn.Module):
-    def __init__(self, input_size, kernels, pools, non_linearity='relu',
-                 batch_norm=False, dropout=0.0):
+    def __init__(self, input_size, layer_params):
         super().__init__()
-        if pools is None:
-            pools = len(kernels) * [None]
 
-        elif len(pools) != len(kernels):
-            raise ValueError(
-                'Number of pooling  and convolution layers do not match')
+        if isinstance(layer_params, dict):
+            layer_params = dict.items()
 
-        in_chann, h, w = input_size
-        non_linearity = get_nonlinearity(non_linearity)
+        in_chann, h, w = output_size = input_size
+        cnn_layers = []
 
-        conv_layers = []
-        for conv_shape, pooling_params in zip(kernels, pools):
-            conv_layers.extend([nn.Conv2d(in_chann, *conv_shape),
-                                non_linearity()])
+        for layer_type, params in layer_params:
+            if layer_type == 'conv':
+                layer = nn.Conv2d(in_chann, *params)
+                output_size = conv2d_out_shape(output_size, *params)
+                in_chann = params[0]
+            elif layer_type == 'batch_norm':
+                layer = nn.BatchNorm2d(in_chann)
+            elif layer_type == 'pool':
+                layer = create_pool(*params)
+                output_size = maxpool2d_out_shape(output_size, *params[:-1])
+            elif layer_type == 'dropout':
+                layer = nn.Dropout2d(*params)
+            else:
+                layer = get_nonlinearity(layer_type)(*params)
 
-            if batch_norm:
-                conv_layers.append(nn.BatchNorm2d(conv_shape[0]))
+            cnn_layers.append(layer)
 
-            if pooling_params is not None:
-                conv_layers.append(create_pool(*pooling_params))
-
-            in_chann = conv_shape[0]
-
-        self.conv_layers = nn.Sequential(*conv_layers)
+        self.layers = nn.Sequential(*cnn_layers)
         self.input_size = input_size
-        self.output_size = np.prod(get_conv_layer_out_shape(
-            input_size, kernels, pools))
+        self.output_size = output_size
 
     def forward(self, inputs):
         inputs = inputs.view(-1, *self.input_size)
-        outputs = self.conv_layers(inputs)
+        outputs = self.layers(inputs)
         return torch.flatten(outputs, start_dim=1)
 
 
-def _bilinear_usample(in_shape, kernel, pool):
-    upsample_shape = conv2d_out_shape(in_shape, *kernel)
-    usample = nn.UpsamplingBilinear2d(size=upsample_shape[1:])
+def _bilinear_usample(in_shape, pool):
+    usample = nn.UpsamplingBilinear2d(size=in_shape[1:])
     in_shape = maxpool2d_out_shape(
-        upsample_shape, *pool[:-1])
+        in_shape, *pool[:-1])
     return usample, in_shape
 
 
 class TransposedCNN(nn.Module):
-    def __init__(self, input_size, kernels, pools, non_linearity='relu',
-                 batch_norm=False, dropout=0.0):
+    def __init__(self, input_size, layer_params):
         super().__init__()
-        if pools is None:
-            pools = len(kernels) * [None]
 
-        conv_layers, layer_input = [], input_size
-        non_linearity = get_nonlinearity(non_linearity)
+        if isinstance(layer_params, dict):
+            layer_params = layer_params.items()
 
-        in_chann, h, w = input_size
+        in_chann, h, w = output_size = input_size
+        tcnn_layers = []
 
-        for kernel, pool in zip(kernels, pools):
-            out_channel = kernel[0]
+        for layer_type, params in layer_params:
+            if layer_type == 'conv':
+                layer = nn.ConvTranspose2d(params[0], in_chann, *params[1:])
+                output_size = conv2d_out_shape(output_size, *params)
+                in_chann = params[0]
+            elif layer_type == 'batch_norm':
+                layer = nn.BatchNorm2d(in_chann)
+            elif layer_type == 'pool':
+                layer, output_size = _bilinear_usample(output_size, params)
+            elif layer_type == 'dropout':
+                layer = nn.Dropout2d(*params)
+            else:
+                layer = get_nonlinearity(layer_type)(*params)
 
-            if batch_norm:
-                conv_layers.append(nn.BatchNorm2d(in_chann))
+            tcnn_layers.append(layer)
 
-            conv_layers.extend([non_linearity(),
-                                nn.ConvTranspose2d(out_channel, in_chann,
-                                                   *kernel[1:])
-                                ])
+        tcnn_layers = list(reversed(tcnn_layers))
+        while not isinstance(tcnn_layers[-1], nn.ConvTranspose2d):
+            tcnn_layers.pop()
 
-            if pool is not None:
-                upsample, layer_input = _bilinear_usample(layer_input,
-                                                          kernel, pool)
-                conv_layers.append(upsample)
-
-            in_chann = out_channel
-
-        conv_layers = list(reversed(conv_layers))
-        while not isinstance(conv_layers[-1], nn.ConvTranspose2d):
-            conv_layers.pop()
-
-        self.tconv_layers = nn.Sequential(*conv_layers)
-        self.input_size = get_conv_layer_out_shape(input_size, kernels, pools)
+        self.layers = nn.Sequential(*tcnn_layers)
+        self.input_size = output_size
         self.output_size = input_size
 
     def forward(self, inputs):
         inputs = inputs.view(-1, *self.input_size)
-        outputs = self.tconv_layers(inputs)
+        outputs = self.layers(inputs)
         return torch.flatten(outputs, start_dim=1)

@@ -107,11 +107,11 @@ class VAEPredictor(nn.Module):
 
 
 @model.capture
-def create_conv_vae(autoencoder, input_size, kernels, pools, batch_norm=False):
-    cnn = CNN(input_size, kernels, pools, batch_norm=batch_norm)
+def create_conv_vae(autoencoder, input_size, cnn_layers, batch_norm=False):
+    cnn = CNN(input_size, cnn_layers)
 
     vae = get_init(autoencoder)(np.prod(cnn.output_size))
 
-    tCNN = TransposedCNN(input_size, kernels, pools, batch_norm=batch_norm)
+    tCNN = TransposedCNN(input_size, cnn_layers)
 
     return CNNAutoEncoder(vae, cnn, tCNN)
