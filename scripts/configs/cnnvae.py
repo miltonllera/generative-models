@@ -14,7 +14,7 @@ def cnn_vae():
              (2, 2, 0, 'max'),
              (2, 2, 0, 'max')]
 
-    encoder_sizes = 256, 256, 20
+    encoder_sizes = 256, 256
     latent_size = 10
     autoencoder = 'variational'
     batch_norm = False

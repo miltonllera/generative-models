@@ -12,15 +12,25 @@ if sys.path[0] != '../src':
 from models.init import init_vae
 from models.convolution import CNN, TransposedCNN
 from models.mlp import create_mlp, kaiming_normal_init_
+from models.vae import VAE, VQAE
 
 
 model = Ingredient('model')
 
 # Basic init functions, add more later
-_init_vae = model.capture(init_vae)
+# _init_vae = model.capture(init_vae)
 _init_cnn = model.capture(CNN)
 _init_tcnn = model.capture(TransposedCNN)
 _init_mlp = model.capture(create_mlp)
+init_vae = model.capture(VAE)
+init_vqae = model.capture(VQAE)
+
+
+def get_init(autoencoder):
+    if autoencoder == 'variational':
+        return init_vae
+    elif autoencoder == 'quantized':
+        return init_vqae
 
 
 # General model initialization function, init_fn will depend on the experiment
@@ -44,7 +54,7 @@ def load_from_db(db, exp_id, mongo_uri='127.0.0.1'):
 # Print the model
 @model.command(unobserved=True)
 def show():
-    model = init_model()
+    model = init_model(init_fn=create_conv_vae)
     print(model)
 
 
@@ -97,12 +107,10 @@ class VAEPredictor(nn.Module):
 
 
 @model.capture
-def create_conv_vae(autoencoder, input_size, kernels, pools, encoder_sizes,
-                    latent_size, batch_norm=False):
+def create_conv_vae(autoencoder, input_size, kernels, pools, batch_norm=False):
     cnn = CNN(input_size, kernels, pools, batch_norm=batch_norm)
 
-    vae = init_vae(autoencoder, np.prod(cnn.output_size), encoder_sizes,
-                   latent_size, batch_norm=batch_norm, raw_output=False)
+    vae = get_init(autoencoder)(np.prod(cnn.output_size))
 
     tCNN = TransposedCNN(input_size, kernels, pools, batch_norm=batch_norm)
 

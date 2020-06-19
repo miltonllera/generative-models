@@ -79,10 +79,6 @@ def main(_config, save_folder):
     def validate(engine):
         validator.run(validation_set)
 
-    # Add beta scheduling
-    add_capacity_scheduling(trainer, loss)
-    add_beta_annealing(trainer, loss)
-
     # Record training progression
     tracer = Tracer(metrics).attach(trainer)
     def log_training(engine):
@@ -94,6 +90,9 @@ def main(_config, save_folder):
 
     trainer.add_event_handler(Events.EPOCH_COMPLETED, log_training)
     validator.add_event_handler(Events.EPOCH_COMPLETED, log_validation)
+
+    # Decay lr
+    attach_lr_scheduler(optimizer, 'recons_nll', validator)
 
     # Save best model
     model_checkpoint = attach_model_checkpointing(validator, 'recons_nll',

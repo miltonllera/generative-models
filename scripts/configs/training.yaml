@@ -1,9 +1,9 @@
 # Baseline training setting
 
 max_epochs: 100
-batch_size: 50
+batch_size: 32
 optimizer: adam
-lr: 0.00005
+lr: 0.001
 l2_norm: 0.0
 rate_reg: 0.0
 clip: 0.0
