@@ -7,8 +7,8 @@ from torch.nn.functional import mse_loss
 from torch.nn.modules.loss import _Loss
 
 
-class ConstrainedELBO(_Loss):
-    def __init__(self, reconstruction_loss='bce', gamma=1000.0, capacity=0.0):
+class VAELoss(_Loss):
+    def __init__(self, reconstruction_loss='bce'):
         super().__init__(reduction='batchmean')
         if reconstruction_loss == 'bce':
             recons_loss = logits_bce
@@ -16,19 +16,24 @@ class ConstrainedELBO(_Loss):
             recons_loss = mse_loss
         elif not callable(reconstruction_loss):
             raise ValueError('Unrecognized reconstruction' \
-                             'loss {}'.format(reconstruction_loss))
+                            'loss {}'.format(reconstruction_loss))
 
         self.recons_loss = recons_loss
-        self.gamma = gamma
-        self.capacity= capacity
 
     def forward(self, input, target):
-        (mu, logvar), reconstruction = input
+        latent_params, reconstruction = input
         target = target.flatten(start_dim=1)
 
         recons_loss = self.recons_loss(reconstruction, target, reduction='sum')
-        KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-        return (recons_loss + self.gamma * (KLD - self.capacity).abs())/target.size(0)
+        kl_div = self.latent_term(*latent_params)
+
+        # print(kl_div.cpu().item() / target.size(0))
+        # print(recons_loss.cpu().item() / target.size(0))
+
+        return (recons_loss + kl_div) / target.size(0)
+
+    def latent_term(self):
+        raise NotImplementedError()
 
 
 class ReconstructionNLL(_Loss):
@@ -48,82 +53,105 @@ class ReconstructionNLL(_Loss):
         return self.loss(reconstruction, target, reduction='sum') / target.size(0)
 
 
-class ELBO(ConstrainedELBO):
-    def __init__(self, reconstruction_loss='bce'):
-        super().__init__(reconstruction_loss, 1.0, 0.0)
+class GaussianKLDivergence(_Loss):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, input, targets):
+        (mu, logvar), _ = input
+        kl = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+        return  kl / targets.size(0)
 
 
-class BetaELBO(ConstrainedELBO):
-    def __init__(self, reconstruction_loss='bce', beta=4.0):
-        super().__init__(reconstruction_loss, beta, 0.0)
+class GaussianVAELoss(VAELoss):
+    def __init__(self, reconstruction_loss='bce', beta=1.0, beta_schedule=None):
+        super().__init__(reconstruction_loss)
+        self.beta = beta
+        self.beta_schedule = beta_schedule
+
+    def latent_term(self, mu, logvar):
+        kl_div = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+        return self.beta * kl_div
+
+    def update_parameters(self, step):
+        if self.beta_schedule is None:
+            return self.beta
+
+        beta_range = self.beta_schedule[:2]
+        steps, schedule_type = self.beta_schedule[2:]
+
+        if schedule_type == 'anneal':
+            bmax, bmin = beta_range
+            delta = (bmax - bmin) / steps
+            self.beta = max(bmax - delta * step, bmin)
+        elif schedule_type == 'increase':
+            bmin, bmax = beta_range
+            delta = (bmax - bmin) / steps
+            self.beta = min(bmin + delta * step, bmax)
 
 
-class CapacityScheduler:
-    def __init__(self, elbo, capacity_range, patience):
-        self.schedule = iter(np.linspace(*capacity_range))
-        self.elbo = elbo
-        self.patience = patience
+class BurgessGVAELoss(VAELoss):
+    def __init__(self, reconstruction_loss='bce', gamma=100.0,
+                 capacity=0.0, capacity_schedule=None):
+        super().__init__(reconstruction_loss)
 
-    def __call__(self, epoch):
-        if (epoch % self.patience) == 0:
-            try:
-                self.elbo.capacity = next(self.schedule)
-            except StopIteration:
-                pass
+        self.gamma = gamma
+        self.capacity = capacity
+        self.capacity_schedule = capacity_schedule
 
+    def latent_term(self, mu, logvar):
+        kl_div = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+        return self.gamma * (kl_div - self.capacity).abs()
 
-class BetaScheduler:
-    def __init__(self, elbo, beta_range, patience):
-        self.schedule = iter(np.linspace(*beta_range))
-        self.elbo = elbo
-        self.patience = patience
+    def update_parameters(self, step):
+        if self.capacity_schedule is None:
+            return self.capacity
 
-    def __call__(self, epoch):
-        if (epoch % self.patience) == 0:
-            try:
-                self.elbo.gamma = next(self.schedule)
-            except StopIteration:
-                pass
+        cmax, cmin, increase_steps = self.capacity_schedule
+        delta = (cmax - cmin) / increase_steps
+
+        self.capacity = cmin + delta * step
 
 
 def get_loss(loss):
-    loss_fn, params = loss
-    if loss_fn == 'elbo':
-        return ELBO(**params)
-    elif loss_fn == 'beta-elbo':
-        return BetaELBO(**params)
-    elif loss_fn == 'constrained-elbo':
-        return ConstrainedELBO(**params)
+    loss_fn, params = loss['name'], loss['params']
+    if loss_fn == 'vae':
+        return GaussianVAELoss(**params, beta=1.0)
+    elif loss_fn == 'beta-vae':
+        return GaussianVAELoss(**params)
+    elif loss_fn == 'constrained-beta-vae':
+        return BurgessGVAELoss(**params)
     elif loss_fn == 'recons_nll':
         return ReconstructionNLL(**params)
     elif loss_fn == 'bxent':
         return nn.BCEWithLogitsLoss(**params)
     elif loss_fn == 'xent':
         return nn.CrossEntropyLoss(**params)
-    elif loss_fn == 'mse':
-        return nn.MSELoss(**params)
     else:
         raise ValueError('Unknown loss function {}'.format(loss_fn))
 
 
 def get_metric(metric):
-    metric, params =  metric
-    if metric == 'mse':
+    name = metric['name']
+    params =  metric['params']
+    if name == 'mse':
         return M.MeanSquaredError(**params)
-    elif metric == 'elbo':
-        return M.Loss(BetaELBO(**params))
-    elif metric == 'recons_nll':
+    elif name == 'vae':
+        return M.Loss(GaussianVAELoss(**params))
+    elif name == 'kl-div':
+        return M.Loss(GaussianKLDivergence())
+    elif name == 'recons_nll':
         return M.Loss(ReconstructionNLL(**params))
-    elif metric == 'bxent':
+    elif name == 'bxent':
         return M.Loss(nn.BCEWithLogitsLoss(**params))
-    elif metric == 'xent':
+    elif name == 'xent':
         return M.Loss(nn.CrossEntropyLoss(**params))
-    elif metric == 'acc':
+    elif name == 'acc':
         return M.Accuracy(**params)
     raise ValueError('Unrecognized metric {}.'.format(metric))
 
 
-def init_metrics(loss, metrics, rate_reg=0.0):
+def init_metrics(loss, metrics, rate_reg=0.0, rnn_eval=False, loss_fn_parameters=None):
     criterion = get_loss(loss)
 
     # if rnn_eval:
@@ -135,6 +163,6 @@ def init_metrics(loss, metrics, rate_reg=0.0):
             decays=[1.0, rate_reg]
         )
 
-    metrics = {m[0]: get_metric(m) for m in metrics}
+    metrics = {m['name']: get_metric(m) for m in metrics}
 
     return criterion, metrics

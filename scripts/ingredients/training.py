@@ -6,7 +6,6 @@ from ignite.engine import Events
 if sys.path[0] != '../src':
     sys.path.insert(0, '../src')
 
-from training.loss import CapacityScheduler, BetaScheduler
 from training.handlers import EarlyStopping, ModelCheckpoint, Tracer, LRScheduler
 from training.optimizer import init_optimizer, init_lr_scheduler
 from training.loss import init_metrics
@@ -18,25 +17,25 @@ def thresholded_output_transform(output):
     return y_pred, y
 
 
-vae_loss = 'elbo', {'reconstruction_loss': 'bce'}
-reconstruction_loss = 'recons_nll', {'loss': 'bce'}
-bvae_loss = 'beta-elbo', {'reconstruction_loss': 'bce', 'beta': 4.0}
-bxent_loss = 'bxent', {}
-xent_loss = 'xent', {}
-accuracy = 'acc', {'output_transform': thresholded_output_transform}
-mse_loss = 'mse', {}
+vae_loss = {'name': 'vae', 'params': {'reconstruction_loss': 'bce'}}
+reconstruction_loss = {'name': 'recons_nll', 'params': {'loss': 'bce'}}
+bvae_loss = {'name': 'beta-vae', 'params': {'reconstruction_loss': 'bce', 'beta': 4.0}}
+bxent_loss = {'name': 'bxent', 'params': {}}
+xent_loss = {'name': 'xent', 'params': {}}
+accuracy = {'name': 'acc', 'params': {'output_transform': thresholded_output_transform}}
+mse_loss = {'name': 'mse', 'params': {}}
+kl_div = {'name': 'kl-div', 'params': {}}
 
 
 training = Ingredient('training')
-training.add_named_config('vae', loss=vae_loss, metrics=[reconstruction_loss])
-training.add_named_config('bvae', loss=bvae_loss, metrics=[reconstruction_loss])
+training.add_named_config('vae', loss=vae_loss, metrics=[reconstruction_loss, kl_div])
+training.add_named_config('bvae', loss=bvae_loss, metrics=[reconstruction_loss, kl_div])
 training.add_named_config('binclass', loss=bxent_loss, metrics=[bxent_loss, accuracy])
 training.add_named_config('class', loss=xent_loss, metrics=[xent_loss, accuracy])
 training.add_named_config('decode_bce', loss=bxent_loss, metrics=[bxent_loss])
 training.add_named_config('decode_mse', loss=mse_loss, metrics=[mse_loss])
 training.add_named_config('recons_nll', loss=reconstruction_loss,
                                         metrics=[reconstruction_loss])
-
 
 init_optimizer =  training.capture(init_optimizer)
 init_metrics = training.capture(init_metrics)
@@ -108,24 +107,3 @@ def attach_early_stopper(trainer, validator, metric_name, patience):
     validator.add_event_handler(Events.COMPLETED, stopper)
 
     return stopper
-
-def setup_training(
-        model, validation_data, optim, loss, metrics, lr, l2_norm,
-        rate_reg, clip, early_stopping, decay_lr, lr_scale,
-        lr_decay_patience, save, device, trace=False, time=False
-    ):
-
-    metric_name = metrics[0][0]
-    loss, metrics = init_metrics(loss, metrics)
-
-
-
-    trainer = create_supervised_trainer(
-        model, optimizer, loss, # grad_clip=clip,
-        device=device, # reset_hidden=(not keep_hidden)
-    )
-
-    validator = create_supervised_evaluator(model, metrics, device=device)
-    @trainer.on(Events.EPOCH_COMPLETED)
-    def validate(engine):
-        validator.run(validation_data)

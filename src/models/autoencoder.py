@@ -2,42 +2,17 @@ import torch
 import torch.nn as nn
 from .stochastic import DiagonalGaussian
 from .quantization import Quantization
-from .mlp import create_mlp, xavier_normal_init_, kaiming_normal_init_
-
+from .feedforward import xavier_normal_init_, kaiming_normal_init_
 
 
 class AutoEncoder(nn.Module):
-    def __init__(self, input_size, encoder_sizes, latent_size,
-                 latent, batch_norm=False, raw_output=True):
-
+    def __init__(self, latent, encoder, decoder):
         super().__init__()
-
-        if isinstance(encoder_sizes, int) and encoder_sizes:
-            encoder_sizes = [encoder_sizes]
-        elif not encoder_sizes:
-            encoder_sizes = []
-
-        # Encoder MLP
-        self.encoder = create_mlp(input_size, encoder_sizes,
-                                  batch_norm=batch_norm,
-                                  init=kaiming_normal_init_)
-
-        # Latent representation
+        self.encoder = encoder
         self.latent = latent
+        self.decoder = decoder
 
-        if raw_output:
-            decoder_sizes = list(reversed(encoder_sizes))
-            output_size = input_size
-        else:
-            decoder_sizes = list(reversed(encoder_sizes)) + [input_size]
-            output_size = None
-
-        # Decoder MLP
-        self.decoder = create_mlp(latent_size, decoder_sizes, output_size,
-                                  batch_norm=batch_norm,
-                                  init=kaiming_normal_init_)
-
-        self.input_size = input_size
+        self.reset_parameter()
 
     @property
     def nlayers(self):
@@ -68,19 +43,16 @@ class AutoEncoder(nn.Module):
         Returns the parameters of the posterior to enable ELBO computation.
         """
         h = self.encoder(inputs)
-        params, z = self.latent(h)
-        return params, self.decoder(z)
+        z_params, z = self.latent(h) # z_params = (mu, logvar)
+        return z_params, self.decoder(z)
 
 
 class VAE(AutoEncoder):
-    def __init__(self, input_size, encoder_sizes, latent_size,
-                 batch_norm=False, raw_output=True):
+    def __init__(self, latent_size, encoder, decoder):
+        latent = DiagonalGaussian(latent_size)
+        super().__init__(latent, encoder, decoder)
 
-        latent_input = encoder_sizes[-1] if len(encoder_sizes) else input_size
-        latent = DiagonalGaussian(latent_input, latent_size)
-
-        super().__init__(input_size, encoder_sizes, latent_size,
-                         latent, batch_norm, raw_output)
+        self.reset_parameter()
 
     def reset_parameter(self):
         self.encoder.apply(kaiming_normal_init_)
@@ -98,17 +70,19 @@ class VAE(AutoEncoder):
         return self.decode(zsamples)
 
     def sample_latent(self, inputs=None, n_samples=1):
-        h = None if inputs is None else self.encoder(inputs)
+        if inputs is None:
+            h = encoder[-1].bias.new_zeros((2, 1, self.latent_size))
+        else:
+            h = self.encoder(inputs)
         return self.latent.sample(h, n_samples)
 
 
 class VQAE(AutoEncoder):
-    def __init__(self, input_size, encoder_sizes, code_size, book_size,
+    def __init__(self, latent_size, encoder, decoder,
                  beta=0.25, batch_norm=False, raw_output=True):
-        latent = Quantization(book_size, code_size, beta=beta)
+        latent = Quantization(*latent_size, beta=beta)
         # encoder_sizes.append(code_size)
-        super().__init__(input_size, encoder_sizes, code_size,
-                         latent, batch_norm, raw_output)
+        super().__init__(latent, encoder, decoder)
 
     def reset_parameter(self):
         self.encoder.apply(kaiming_normal_init_)

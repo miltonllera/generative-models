@@ -9,19 +9,13 @@ from incense import ExperimentLoader
 if sys.path[0] != '../src':
     sys.path.insert(0, '../src')
 
-from models.init import init_vae
-from models.convolution import CNN, TransposedCNN
-from models.mlp import create_mlp, kaiming_normal_init_
-from models.vae import VAE, VQAE
+from models.feedforward import FeedForward, TransposedFF
+from models.autoencoder import VQAE, VAE
 
 
 model = Ingredient('model')
 
 # Basic init functions, add more later
-# _init_vae = model.capture(init_vae)
-_init_cnn = model.capture(CNN)
-_init_tcnn = model.capture(TransposedCNN)
-_init_mlp = model.capture(create_mlp)
 init_vae = model.capture(VAE)
 init_vqae = model.capture(VQAE)
 
@@ -54,42 +48,11 @@ def load_from_db(db, exp_id, mongo_uri='127.0.0.1'):
 # Print the model
 @model.command(unobserved=True)
 def show():
-    model = init_model(init_fn=create_conv_vae)
+    model = init_model(init_fn=init_cnn_autoencoder)
     print(model)
 
 
 # Convolutional AutoEncoder
-class CNNAutoEncoder(nn.Module):
-    def __init__(self, vae, cnn, transposed_cnn):
-        super().__init__()
-        self.cnn = cnn
-        self.vae = vae
-        self.transposed_cnn = transposed_cnn
-
-    @property
-    def latent_size(self):
-        return self.vae.latent_size
-
-    def forward(self, inputs):
-        inputs = self.cnn(inputs)
-        params, z = self.vae(inputs)
-        recons = self.transposed_cnn(z)
-
-        return params, recons
-
-    def embed(self, inputs):
-        h = self.cnn(inputs)
-        return self.vae.embed(h)
-
-    def decode(self, z):
-        h_prime = self.vae.decode(z)
-        return self.transposed_cnn(h_prime)
-
-    def sample_latent(self, inputs, max_samples):
-        h_prime = self.cnn(inputs)
-        return self.vae.sample_latent(h_prime, max_samples)
-
-
 class VAEPredictor(nn.Module):
     def __init__(self, vae, output_size, pretrained=True):
         super().__init__()
@@ -107,11 +70,27 @@ class VAEPredictor(nn.Module):
 
 
 @model.capture
-def create_conv_vae(autoencoder, input_size, cnn_layers, batch_norm=False):
-    cnn = CNN(input_size, cnn_layers)
+def init_cnn_autoencoder(autoencoder, input_size, encoder_layers,
+                         latent_size, decoder_layers=None):
+    if autoencoder == 'variational':
+        latent_input = 2 * latent_size
+        latent_output = latent_size
+    elif autoencoder == 'quantized':
+        latent_input = latent_output = latent_size[1]
 
-    vae = get_init(autoencoder)(np.prod(cnn.output_size))
+    encoder_layers += [('linear', [latent_input])]
+    encoder = FeedForward(input_size, encoder_layers, flatten=False)
 
-    tCNN = TransposedCNN(input_size, cnn_layers)
+    if decoder_layers is None:
+        decoder_layers = encoder_layers[:-1]
+        decoder_layers.append(('linear', [latent_output]))
 
-    return CNNAutoEncoder(vae, cnn, tCNN)
+        decoder_layers = list(reversed(decoder_layers))
+        decoder = TransposedFF(decoder_layers, input_size, flatten=True)
+
+    else:
+        decoder.append(('linear', [np.prod(input_size)]))
+        decoder = FeedForward(latent_size, decoder_layers, flatten=True)
+
+
+    return get_init(autoencoder)(latent_size, encoder=encoder, decoder=decoder)

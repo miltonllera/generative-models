@@ -8,9 +8,8 @@ from sacred.observers import MongoObserver, FileStorageObserver
 
 # Load experiment ingredients and their respective configs.
 from ingredients.dataset import dataset, get_dataset_loader
-from ingredients.models import model, init_model, create_conv_vae, VAEPredictor
+from ingredients.models import model, init_model, init_cnn_autoencoder, VAEPredictor
 from ingredients.training import training, init_metrics, init_optimizer
-from ingredients.training import add_beta_annealing, add_capacity_scheduling
 from ingredients.training import vae_loss, reconstruction_loss
 from ingredients.training import attach_lr_scheduler, attach_model_checkpointing, \
                                  attach_early_stopper, Tracer
@@ -45,7 +44,7 @@ dataset.add_config('configs/mnist.yaml')
 
 # Training configs
 training.add_config('configs/training.yaml')
-training.add_config(loss=vae_loss, metrics=[reconstruction_loss])
+# training.add_config(loss=vae_loss, metrics=[reconstruction_loss])
 # training.add_named_config('banneal', 'configs/beta-annealing.yaml')
 
 # Model configs
@@ -66,7 +65,7 @@ def main(_config, save_folder):
                                                 batch_size=batch_size)
 
     # Init model
-    vae = init_model(init_fn=create_conv_vae, device=device)
+    vae = init_model(init_fn=init_cnn_autoencoder, device=device)
 
     # Init metrics
     loss, metrics = init_metrics()
