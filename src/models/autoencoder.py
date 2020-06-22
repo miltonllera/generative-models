@@ -78,9 +78,8 @@ class VAE(AutoEncoder):
 
 
 class VQAE(AutoEncoder):
-    def __init__(self, latent_size, encoder, decoder,
-                 beta=0.25, batch_norm=False, raw_output=True):
-        latent = Quantization(*latent_size, beta=beta)
+    def __init__(self, latent_size, encoder, decoder):
+        latent = Quantization(*latent_size)
         # encoder_sizes.append(code_size)
         super().__init__(latent, encoder, decoder)
 
@@ -91,8 +90,8 @@ class VQAE(AutoEncoder):
 
     def forward(self, input):
         h = self.encoder(input)
-        z = self.latent(h)
-        return self.decoder(z), z, h
+        z, diff = self.latent(h)
+        return self.decoder(z), z, diff
 
     def embed(self, input):
         h = self.encoder(input)

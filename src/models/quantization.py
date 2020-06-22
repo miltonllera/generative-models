@@ -56,13 +56,12 @@ class EMAUpdater(nn.Module):
 
 
 class Quantization(nn.Module):
-    def __init__(self, book_size, code_size, beta=1.0, update_type='expmavg'):
+    def __init__(self, book_size, code_size, update_type='expmavg'):
         if update_type not in ['expmavg', 'distmin']:
             raise ValueError('Unrecognized update {}'.format(update))
 
         super().__init__()
 
-        self.beta = beta
         self.update_type = update_type
         self.codebook = nn.Parameter(torch.empty((book_size, code_size),
                                                  dtype=torch.float32))
@@ -100,50 +99,25 @@ class Quantization(nn.Module):
         detached_input = inputs.detach()
         embeddings = self.codebook.unsqueeze(0)
 
-        # Input to cdist is BxPxM, BxRxM so we unsqueeze dim 0
-        # So we have inputs 1xNxD, 1xBxD and output 1xNxB
+        # Input to cdist is BxPxM, BxRxM, we unsqueeze dim 0
+        # so that we have inputs 1xNxD, 1xBxD and output 1xNxB
         # print(detached_input.size())
         # print(embeddings.size())
         dist = torch.cdist(detached_input.unsqueeze(0), embeddings, p=2)
 
         idx = dist.squeeze_().argmax(dim=1)
         quantized = self.codebook[idx].contiguous() # z_q
+        diff = quantized.detach() - inputs
 
         if self.training:
             self.update_code(detached_input, dist, idx)
             quantized = inputs + (quantized - inputs).detach_()
 
-            # Propagate the gradients. First minimize input-embedding distance
-            # by treating the latter as parameters in the computation. Then,
-            # backpropagate the gradient w.r.t. the decoder through the input.
-            # def compute_commitment_loss(grad):
-                # nonlocal inputs, detached_inputs, quantized, dist, idx
-                # with torch.enable_grad():
-                    # detached_input.requires_grad_(True)
-                    # commit_loss = (detached_input - quantized.detach()).pow(2)
-                    # commit_loss = self.beta * commit_loss.mean(0).sum()
-                    # commit_loss.backward()
-
-                # self.update_code(detached_input, dist, idx)
-
-                # return grad + detached_input.grad
-
-                # Commit loss = beta * 1/N * \sum_N (input - quantized)^2
-                # Commit loss grad wrt input = beta * 2/N * (input - quantized)
-                # size = inputs.size(0)
-                # commit_loss_grad = 2 * self.beta * (inputs - quantized) / size
-
-                # self.update_code(detached_input, dist, idx)
-
-                # return grad + commit_loss_grad
-
-            # quantized = inputs + (quantized - inputs).detach_()
-            # inputs.register_hook(compute_commitment_loss)
-
         if len(input_size) > 2:
             quantized = quantized.reshape(input_size).contiguous()
+            diff = diff.reshape(input_size).contiguous()
 
-        return quantized
+        return quantized, diff
 
     def extra_repr(self):
         return 'book size={}, code size={}, beta={}, code_update={}'.format(

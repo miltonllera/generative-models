@@ -116,14 +116,13 @@ class BurgessGVAELoss(AELoss):
 
 
 class QuantizationLoss(AELoss):
-    def __init__(self, reconstruction_loss='mse', beta=1.0):
+    def __init__(self, reconstruction_loss='mse', beta=0.25):
         super().__init__(reconstruction_loss)
         self.beta = beta
 
-    def latent_term(self, quantization, embedding):
-        quantization = quantization.flatten(1)
-        embedding = embedding.flatten(1)
-        return self.beta * (quantization - embedding).pow(2).sum()
+    def latent_term(self, quantization, diff):
+        return self.beta * diff.pow(2).sum()
+
 
 def get_loss(loss):
     loss_fn, params = loss['name'], loss['params']

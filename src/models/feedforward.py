@@ -173,7 +173,7 @@ class Transpose(nn.Module):
         self.transposed_dims = dim1, dim2
 
     def forward(self, inputs):
-        return inputs.transpose(*self.transposed_dims)
+        return inputs.transpose(*self.transposed_dims).contiguous()
 
     def extra_repr(self):
         return 'dim1={}, dim2={}'.format(*self.transposed_dims)

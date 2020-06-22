@@ -32,8 +32,8 @@ class DiagonalGaussian(StochasticLayer):
 
     def sample(self, inputs=None, n_samples=1, device='cpu'):
         mu, logvar = inputs.chunk(2, dim=1)
-        mu = mu.unsqueeze_(1).expand(-1, n_samples, -1)
-        logvar = logvar.unsqueeze_(1).expand(-1, n_samples, -1)
+        mu = mu.unsqueeze_(1).expand(-1, n_samples, -1).contiguous()
+        logvar = logvar.unsqueeze_(1).expand(-1, n_samples, -1).contiguous()
 
         return self.reparam(mu, logvar, random_eval=True)
 
