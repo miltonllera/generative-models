@@ -7,7 +7,7 @@ from torch.nn.functional import mse_loss
 from torch.nn.modules.loss import _Loss
 
 
-class VAELoss(_Loss):
+class AELoss(_Loss):
     def __init__(self, reconstruction_loss='bce'):
         super().__init__(reduction='batchmean')
         if reconstruction_loss == 'bce':
@@ -21,16 +21,16 @@ class VAELoss(_Loss):
         self.recons_loss = recons_loss
 
     def forward(self, input, target):
-        latent_params, reconstruction = input
+        reconstruction, z_samples, latent_params = input
         target = target.flatten(start_dim=1)
 
         recons_loss = self.recons_loss(reconstruction, target, reduction='sum')
-        kl_div = self.latent_term(*latent_params)
+        latent_loss = self.latent_term(z_samples, latent_params)
 
         # print(kl_div.cpu().item() / target.size(0))
         # print(recons_loss.cpu().item() / target.size(0))
 
-        return (recons_loss + kl_div) / target.size(0)
+        return (recons_loss + latent_loss) / target.size(0)
 
     def latent_term(self):
         raise NotImplementedError()
@@ -49,7 +49,7 @@ class ReconstructionNLL(_Loss):
         self.loss = recons_loss
 
     def forward(self, input, target):
-        params, reconstruction = input
+        reconstruction = input[0]
         return self.loss(reconstruction, target, reduction='sum') / target.size(0)
 
 
@@ -58,18 +58,19 @@ class GaussianKLDivergence(_Loss):
         super().__init__()
 
     def forward(self, input, targets):
-        (mu, logvar), _ = input
+        _, _, (mu, logvar) = input
         kl = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
         return  kl / targets.size(0)
 
 
-class GaussianVAELoss(VAELoss):
+class GaussianVAELoss(AELoss):
     def __init__(self, reconstruction_loss='bce', beta=1.0, beta_schedule=None):
         super().__init__(reconstruction_loss)
         self.beta = beta
         self.beta_schedule = beta_schedule
 
-    def latent_term(self, mu, logvar):
+    def latent_term(self, z_samples, z_params):
+        mu, logvar = z_params
         kl_div = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
         return self.beta * kl_div
 
@@ -90,7 +91,7 @@ class GaussianVAELoss(VAELoss):
             self.beta = min(bmin + delta * step, bmax)
 
 
-class BurgessGVAELoss(VAELoss):
+class BurgessGVAELoss(AELoss):
     def __init__(self, reconstruction_loss='bce', gamma=100.0,
                  capacity=0.0, capacity_schedule=None):
         super().__init__(reconstruction_loss)
@@ -99,7 +100,8 @@ class BurgessGVAELoss(VAELoss):
         self.capacity = capacity
         self.capacity_schedule = capacity_schedule
 
-    def latent_term(self, mu, logvar):
+    def latent_term(self, z_samples, z_params):
+        mu, logvar = z_params
         kl_div = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
         return self.gamma * (kl_div - self.capacity).abs()
 
@@ -113,6 +115,16 @@ class BurgessGVAELoss(VAELoss):
         self.capacity = cmin + delta * step
 
 
+class QuantizationLoss(AELoss):
+    def __init__(self, reconstruction_loss='mse', beta=1.0):
+        super().__init__(reconstruction_loss)
+        self.beta = beta
+
+    def latent_term(self, quantization, embedding):
+        quantization = quantization.flatten(1)
+        embedding = embedding.flatten(1)
+        return self.beta * (quantization - embedding).pow(2).sum()
+
 def get_loss(loss):
     loss_fn, params = loss['name'], loss['params']
     if loss_fn == 'vae':
@@ -121,6 +133,8 @@ def get_loss(loss):
         return GaussianVAELoss(**params)
     elif loss_fn == 'constrained-beta-vae':
         return BurgessGVAELoss(**params)
+    elif loss_fn == 'qae':
+        return QuantizationLoss(**params)
     elif loss_fn == 'recons_nll':
         return ReconstructionNLL(**params)
     elif loss_fn == 'bxent':

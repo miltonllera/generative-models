@@ -44,7 +44,7 @@ class AutoEncoder(nn.Module):
         """
         h = self.encoder(inputs)
         z_params, z = self.latent(h) # z_params = (mu, logvar)
-        return z_params, self.decoder(z)
+        return self.decoder(z), z, z_params
 
 
 class VAE(AutoEncoder):
@@ -92,7 +92,7 @@ class VQAE(AutoEncoder):
     def forward(self, input):
         h = self.encoder(input)
         z = self.latent(h)
-        return z, self.decoder(z)
+        return self.decoder(z), z, h
 
     def embed(self, input):
         h = self.encoder(input)
