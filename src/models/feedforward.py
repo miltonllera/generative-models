@@ -134,19 +134,24 @@ def get_conv_layer_out_shape(input_size, kernels, pools):
 def compute_flattened_size(input_size, start_dim=1, end_dim=-1):
     start_dim -= 1
     if end_dim < 0:
-        end_dim = len(input_size)
+        end_dim = len(input_size) + 1
 
     if start_dim < 0:
         raise ValueError('Cannot flatten batch dimension')
 
     output_size = list(input_size[:start_dim])
-    output_size.append(np.prod(input_size[start_dim:end_dim+1]))
-    output_size.extend(input_size[end_dim+1:])
+    output_size.append(np.prod(input_size[start_dim:end_dim]))
+    output_size.extend(input_size[end_dim:])
 
     if len(output_size) == 1:
         return output_size[0]
 
     return output_size
+
+class Flatten(nn.Flatten):
+    def extra_repr(self):
+        dims = [str(self.start_dim), str(self.end_dim)]
+        return 'start_dim={}, end_dim={}'.format(*dims)
 
 
 class Unflatten(nn.Module):
@@ -160,6 +165,24 @@ class Unflatten(nn.Module):
     def extra_repr(self):
         dims = [str(d) for d in self.unflatten_shape]
         return 'batch_size, {}'.format(', '.join(dims))
+
+
+class Transpose(nn.Module):
+    def __init__(self, dim1, dim2):
+        super().__init__()
+        self.transposed_dims = dim1, dim2
+
+    def forward(self, inputs):
+        return inputs.transpose(*self.transposed_dims)
+
+    def extra_repr(self):
+        return 'dim1={}, dim2={}'.format(*self.transposed_dims)
+
+
+def transpose_size(size, dim1, dim2):
+    size = list(size)
+    size[dim1-1], size[dim2-1] = size[dim2-1], size[dim1-1]
+    return size
 
 
 class FeedForward(nn.Sequential):
@@ -190,8 +213,11 @@ class FeedForward(nn.Sequential):
             elif layer_type == 'dropout':
                 layer = nn.Dropout2d(*params)
             elif layer_type == 'flatten':
-                layer = nn.Flatten(*params)
+                layer = Flatten(*params)
                 output_size = compute_flattened_size(output_size, *params)
+            elif layer_type == 'transpose':
+                layer = Transpose(*params)
+                output_size = transpose_size(output_size, *params)
             else:
                 layer = get_nonlinearity(layer_type)(*params)
 
@@ -254,6 +280,10 @@ class TransposedFF(nn.Sequential):
             elif layer_type in ['flatten', 'unflatten']:
                 layer = Unflatten(output_size)
                 output_size = compute_flattened_size(output_size, *params)
+            elif layer_type == 'transpose':
+                params = list(reversed(params))
+                layer = Transpose(*params)
+                output_size = transpose_size(output_size, *params)
             else:
                 layer = get_nonlinearity(layer_type)(*params)
 
