@@ -7,7 +7,7 @@ from torch.nn.functional import mse_loss
 from torch.nn.modules.loss import _Loss
 
 
-class AELoss(_Loss):
+class VAELoss(_Loss):
     def __init__(self, reconstruction_loss='bce'):
         super().__init__(reduction='batchmean')
         if reconstruction_loss == 'bce':
@@ -21,16 +21,15 @@ class AELoss(_Loss):
         self.recons_loss = recons_loss
 
     def forward(self, input, target):
-        reconstruction, z_samples, latent_params = input
+        reconstruction, z, latent_params = input
         target = target.flatten(start_dim=1)
 
         recons_loss = self.recons_loss(reconstruction, target, reduction='sum')
-        latent_loss = self.latent_term(z_samples, latent_params)
+        recons_loss /= target.size(0)
 
-        # print(kl_div.cpu().item() / target.size(0))
-        # print(recons_loss.cpu().item() / target.size(0))
+        kl_div = self.latent_term(z, *latent_params)
 
-        return (recons_loss + latent_loss) / target.size(0)
+        return recons_loss + kl_div
 
     def latent_term(self):
         raise NotImplementedError()
@@ -49,7 +48,11 @@ class ReconstructionNLL(_Loss):
         self.loss = recons_loss
 
     def forward(self, input, target):
-        reconstruction = input[0]
+        if isinstance(input, (tuple, list)):
+            reconstruction = input[0]
+        else:
+            reconstruction = input
+
         return self.loss(reconstruction, target, reduction='sum') / target.size(0)
 
 
@@ -63,35 +66,30 @@ class GaussianKLDivergence(_Loss):
         return  kl / targets.size(0)
 
 
-class GaussianVAELoss(AELoss):
+class GaussianVAELoss(VAELoss):
     def __init__(self, reconstruction_loss='bce', beta=1.0, beta_schedule=None):
         super().__init__(reconstruction_loss)
         self.beta = beta
         self.beta_schedule = beta_schedule
+        self.anneal = 1.0
 
-    def latent_term(self, z_samples, z_params):
-        mu, logvar = z_params
-        kl_div = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-        return self.beta * kl_div
+    def latent_term(self, z_sample, mu, logvar):
+        kl_div = -0.5 * (1 + logvar - mu.pow(2) - logvar.exp()).sum()
+        kl_div /= z_sample.size(0)
+        return self.anneal * self.beta * kl_div.sum()
 
     def update_parameters(self, step):
-        if self.beta_schedule is None:
-            return self.beta
+        if self.beta_schedule is not None:
+            steps, schedule_type = self.beta_schedule
+            delta = 1 / steps
 
-        beta_range = self.beta_schedule[:2]
-        steps, schedule_type = self.beta_schedule[2:]
-
-        if schedule_type == 'anneal':
-            bmax, bmin = beta_range
-            delta = (bmax - bmin) / steps
-            self.beta = max(bmax - delta * step, bmin)
-        elif schedule_type == 'increase':
-            bmin, bmax = beta_range
-            delta = (bmax - bmin) / steps
-            self.beta = min(bmin + delta * step, bmax)
+            if schedule_type == 'anneal':
+                self.anneal = max(1.0 - step * delta, 0)
+            elif schedule_type == 'increase':
+                self.anneal = min(delta * step, 1.0)
 
 
-class BurgessGVAELoss(AELoss):
+class BurgessLoss(VAELoss):
     def __init__(self, reconstruction_loss='bce', gamma=100.0,
                  capacity=0.0, capacity_schedule=None):
         super().__init__(reconstruction_loss)
@@ -100,19 +98,17 @@ class BurgessGVAELoss(AELoss):
         self.capacity = capacity
         self.capacity_schedule = capacity_schedule
 
-    def latent_term(self, z_samples, z_params):
-        mu, logvar = z_params
-        kl_div = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-        return self.gamma * (kl_div - self.capacity).abs()
+    def latent_term(self, z_sample, mu, logvar):
+        kl_div = -0.5 * (1 + logvar - mu.pow(2) - logvar.exp()).sum()
+        kl_div /= z_sample.size(0)
+        return self.gamma * (kl_div- self.capacity).abs()
 
     def update_parameters(self, step):
-        if self.capacity_schedule is None:
-            return self.capacity
+        if self.capacity_schedule is not None:
+            cmin, cmax, increase_steps = self.capacity_schedule
+            delta = (cmax - cmin) / increase_steps
 
-        cmax, cmin, increase_steps = self.capacity_schedule
-        delta = (cmax - cmin) / increase_steps
-
-        self.capacity = cmin + delta * step
+        self.capacity = min(cmin + delta * step, cmax)
 
 
 class QuantizationLoss(AELoss):
@@ -121,7 +117,7 @@ class QuantizationLoss(AELoss):
         self.beta = beta
 
     def latent_term(self, quantization, diff):
-        return self.beta * diff.pow(2).sum()
+        return self.beta * diff.pow(2).sum() / quantization.size(0)
 
 
 def get_loss(loss):
@@ -131,9 +127,7 @@ def get_loss(loss):
     elif loss_fn == 'beta-vae':
         return GaussianVAELoss(**params)
     elif loss_fn == 'constrained-beta-vae':
-        return BurgessGVAELoss(**params)
-    elif loss_fn == 'qae':
-        return QuantizationLoss(**params)
+        return BurgessLoss(**params)
     elif loss_fn == 'recons_nll':
         return ReconstructionNLL(**params)
     elif loss_fn == 'bxent':
@@ -164,11 +158,8 @@ def get_metric(metric):
     raise ValueError('Unrecognized metric {}.'.format(metric))
 
 
-def init_metrics(loss, metrics, rate_reg=0.0, rnn_eval=False, loss_fn_parameters=None):
+def init_metrics(loss, metrics, rate_reg=0.0):
     criterion = get_loss(loss)
-
-    # if rnn_eval:
-    #     criterion = RNNLossWrapper(criterion)
 
     if rate_reg > 0:
         criterion = ComposedLoss(
